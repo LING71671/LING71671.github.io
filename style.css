@@ -20,11 +20,11 @@
    ============================================================ */
 :root {
   /* --- 主色调 --- */
-  --bg-primary: #FFF8F0;
-  /* 奶油色背景 */
-  --bg-secondary: #FEF3E2;
-  /* 温暖浅黄 */
-  --bg-card: #FFFFFF;
+  --bg-primary: #e0c3fc;
+  /* 毛玻璃主背景渐变起点 */
+  --bg-secondary: #8ec5fc;
+  /* 毛玻璃主背景渐变终点 */
+  --bg-card: rgba(255, 255, 255, 0.4);
   /* 纯白卡片 */
   --text-primary: #5D4E37;
   /* 棕褐色主文字 */
@@ -72,6 +72,14 @@
   --noise-opacity: 0;
   --glitch-text-shadow: none;
   --horror-border: none;
+
+  /* --- 文章和下载系统缺失的变量 --- */
+  --card-bg: var(--bg-card);
+  --shadow-neu-out: var(--shadow-float);
+  --shadow-neu-in: inset 0 2px 4px rgba(93, 78, 55, 0.02);
+  --primary-color: var(--text-primary);
+  --secondary-color: var(--accent);
+  --text-color: var(--text-secondary);
 }
 
 /* ============================================================
@@ -155,11 +163,12 @@ html {
 
 body {
   font-family: var(--font-primary);
-  background-color: var(--bg-primary);
+  background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+  background-attachment: fixed;
   color: var(--text-primary);
   cursor: var(--cursor);
   transition:
-    background-color var(--transition-speed) var(--transition-ease),
+    background var(--transition-speed) var(--transition-ease),
     color var(--transition-speed) var(--transition-ease);
   min-height: 100vh;
   overflow-x: hidden;
@@ -351,6 +360,17 @@ body {
    ============================================================ */
 .profile-header {
   text-align: center;
+  margin-bottom: 60px;
+}
+
+.glass-header {
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: var(--border-radius);
+  padding: 40px 20px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.05);
   margin-bottom: 60px;
 }
 
@@ -574,10 +594,12 @@ body {
 /* 单张仓库卡片 */
 .repo-card {
   background: var(--bg-card);
-  border: var(--border-width) var(--border-style) var(--border-color);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
   border-radius: var(--border-radius);
   padding: 28px;
-  box-shadow: var(--shadow-float);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
   filter: var(--card-filter);
   transition:
     all var(--transition-speed) var(--transition-ease);
@@ -590,8 +612,8 @@ body {
 
 /* 治愈模式悬浮效果：上浮 + 呼吸缩放 */
 .repo-card:hover {
-  transform: translateY(-8px) scale(1.02);
-  box-shadow: var(--shadow-hover);
+  transform: translateY(-5px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
 }
 
 /* 恐怖模式卡片悬浮 */
@@ -838,11 +860,15 @@ body {
    ============================================================ */
 @media (max-width: 768px) {
   .container {
-    padding: 40px 16px 30px;
+    padding: 20px 12px;
   }
 
   .username {
     font-size: 2rem;
+  }
+
+  .section-title {
+    font-size: 1.4rem;
   }
 
   .avatar-wrapper {
@@ -900,6 +926,7 @@ body::before {
       transparent 50%);
   animation: bgBreathe 8s ease-in-out infinite;
   transition: opacity 1s;
+  display: none; /* Disabled for Glassmorphism */
 }
 
 .horror-mode body::before,
@@ -955,18 +982,19 @@ body.horror-mode::before {
 
 .article-card {
   background: var(--card-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
   border-radius: 16px;
   padding: 20px 24px;
-  box-shadow: var(--shadow-neu-out), var(--shadow-neu-in);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
   transition: all 0.3s ease;
   cursor: pointer;
-  border: 1px solid transparent;
 }
 
 .article-card:hover {
-  transform: translateY(-3px);
-  box-shadow: 10px 10px 20px rgba(163, 177, 198, 0.4),
-    -10px -10px 20px rgba(255, 255, 255, 0.8);
+  transform: translateY(-5px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
 }
 
 .article-header {
@@ -1037,16 +1065,24 @@ body.horror-mode::before {
 
 .download-card {
   background: var(--card-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
   border-radius: 16px;
   padding: 20px;
   text-align: center;
-  box-shadow: var(--shadow-neu-out);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
   transition: all 0.3s ease;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   height: 100%;
+}
+
+.download-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
 }
 
 .download-icon {
