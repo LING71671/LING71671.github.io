@@ -76,8 +76,8 @@ function draw(ctx: CanvasRenderingContext2D, activity: Activity | null): void {
   ctx.strokeStyle = '#ded2b6';
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.moveTo(26, 186);
-  ctx.lineTo(W - 26, 186);
+  ctx.moveTo(26, 178);
+  ctx.lineTo(W - 26, 178);
   ctx.stroke();
 
   if (!activity || activity.days.length === 0) {
@@ -91,9 +91,16 @@ function draw(ctx: CanvasRenderingContext2D, activity: Activity | null): void {
   const days = activity.days;
   const cell = 13;
   const gap = 4;
-  const gridTop = 208;
-  const gridLeft = 26;
+  const gridTop = 200;
+  const gridLeft = 58; // 左侧留出星期标签
   const maxCount = Math.max(1, ...days.map((d) => d.count));
+
+  // 星期标签（只标周一/三/五，避免拥挤）
+  ctx.fillStyle = '#a99b80';
+  ctx.font = '500 12px "Noto Serif SC", serif';
+  for (const [row, label] of [[1, '一'], [3, '三'], [5, '五']] as const) {
+    ctx.fillText(label, 30, gridTop + row * (cell + gap) + cell / 2);
+  }
 
   // 第一列对齐到该周的星期几
   const firstDow = new Date(days[0]!.date + 'T00:00:00').getDay();
@@ -110,7 +117,8 @@ function draw(ctx: CanvasRenderingContext2D, activity: Activity | null): void {
     const y = gridTop + dow * (cell + gap);
 
     if (day.count === 0) {
-      ctx.fillStyle = '#e7dec6';
+      // 空格子要看得见，否则整张格子只剩零星几个亮点，读不出「日历」
+      ctx.fillStyle = '#e2d7ba';
     } else {
       const t = Math.min(1, day.count / maxCount);
       // 奶油 → 黄铜 → 深墨，与站点色板同源
@@ -121,17 +129,17 @@ function draw(ctx: CanvasRenderingContext2D, activity: Activity | null): void {
   });
 
   // 底部统计
-  const footY = gridTop + 7 * (cell + gap) + 26;
+  const footY = gridTop + 7 * (cell + gap) + 28;
   ctx.fillStyle = '#5a4c3a';
-  ctx.font = '500 17px "Noto Serif SC", serif';
-  ctx.fillText(`近 13 周 ${activity.total} 次提交`, 26, footY);
+  ctx.font = '600 20px "Noto Serif SC", serif';
+  ctx.fillText(`近 13 周 ${activity.total} 次提交`, 30, footY);
 
   if (activity.latest?.repo) {
     ctx.fillStyle = '#a8853c';
-    ctx.font = '500 15px ui-monospace, monospace';
+    ctx.font = '500 17px ui-monospace, monospace';
     const repo = activity.latest.repo;
-    const label = repo.length > 26 ? `${repo.slice(0, 25)}…` : repo;
-    ctx.fillText(label, 26, footY + 26);
+    const label = repo.length > 24 ? `${repo.slice(0, 23)}…` : repo;
+    ctx.fillText(label, 30, footY + 28);
   }
 }
 

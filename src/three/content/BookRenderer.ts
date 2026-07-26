@@ -265,9 +265,10 @@ export class BookRenderer {
     const cx = hit.uv.x * W;
     const cy = (1 - hit.uv.y) * H;
 
-    // 目录右页：命中文章条目 → 打开该篇
-    if (isRight && this.mode === 'toc') {
-      const region = this.curR?.regions.find((r) => cy >= r.y0 - 10 && cy <= r.y1 + 10);
+    // 目录页：命中文章条目 → 打开该篇（条目可能溢出到后续跨的左页，两页都要查）
+    if (this.mode === 'toc') {
+      const page = isRight ? this.curR : this.curL;
+      const region = page?.regions.find((r) => cy >= r.y0 - 10 && cy <= r.y1 + 10);
       if (region) {
         void this.openPost(region.slug);
         return true;

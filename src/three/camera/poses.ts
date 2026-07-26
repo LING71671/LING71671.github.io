@@ -57,9 +57,9 @@ export const FOCUS_POSES: Partial<Record<HotspotId, FocusPoseDef>> = {
   },
   calendar: {
     anchor: NODES.calendarRoot,
-    offset: new THREE.Vector3(-0.06, 0.1, 0.34),
-    targetOffset: new THREE.Vector3(0, 0.01, 0),
-    fov: 34,
+    offset: new THREE.Vector3(-0.04, 0.07, 0.26),
+    targetOffset: new THREE.Vector3(0, 0.005, 0),
+    fov: 32,
   },
   coffee: {
     anchor: NODES.coffeeRoot,

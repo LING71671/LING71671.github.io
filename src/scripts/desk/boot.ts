@@ -4,6 +4,7 @@
  * 主动刷新 / 新标签 / 新会话重放；全程无任何用户可见跳过 UI。
  */
 import type { DeskScene } from '../../three/main';
+import { HOTSPOTS } from '../../lib/hotspots';
 import { PanelRouter } from './panel-router';
 import { OverlayFSM } from './overlay-fsm';
 import {
@@ -198,8 +199,14 @@ async function run(): Promise<void> {
 
   api.on('lamp:modeChange', ({ mode }) => showToast(lampLabel(mode), 1600));
 
-  // 聚焦时背景虚化（CSS blur，性能优先的景深近似）
-  api.on('camera:focusComplete', () => canvas.classList.add('blurred'));
+  // 聚焦时背景虚化：只在真的弹出 HTML 面板时才做。
+  // 就地阅读（in-scene，如书页/显示器）内容长在 3D 物体上，虚化会把它一起糊掉。
+  api.on('camera:focusComplete', ({ id }) => {
+    const behavior = HOTSPOTS[id]?.behavior;
+    if (behavior === 'content' || behavior === 'popover') {
+      canvas.classList.add('blurred');
+    }
+  });
   api.on('camera:unfocusComplete', () => canvas.classList.remove('blurred'));
 
   api.on('contextlost', () => degrade());
