@@ -1,20 +1,18 @@
 /**
- * 站点身份与全局配置 —— 唯一占位内容源。
- * 「三页」等身份信息来自设计效果图，正式上线前在此一处替换即可。
+ * 站点身份与全局配置 —— 唯一身份内容源。
  * SITE.url 需与 astro.config.mjs 的 site 保持一致。
  */
 
 export const SITE = {
-  name: '三页',
-  title: '三页的书桌',
+  name: 'Ling',
+  title: 'Ling 的书桌',
   description:
-    '一个私人的数字书桌 / 学习空间博客。在宁静、专注、可探索的环境中记录与思考。',
-  url: 'https://sanye.design',
-  email: 'hello@sanye.design',
-  location: '中国 · 杭州',
-  roles: ['产品设计师', '独立开发者', '内容创作者'],
-  bio: '专注于数字产品设计与体验思考，喜欢把复杂的想法，变成简单温暖的界面。',
-  motto: '这是一张属于我的书桌，也是我与世界对话的方式。',
+    '一张放在网上的书桌。研究 AI 编码工具的内部实现，做逆向工程的自动化，偶尔写点别的。',
+  url: 'https://ling71671.github.io',
+  location: 'Paradise',
+  roles: ['逆向工程', 'AI 工具', '独立开发'],
+  bio: '拆开工具看它怎么工作的人。最近在读 Claude Code 的源码，维护一个逆向工程知识库，写一些自己每天会用的小程序。',
+  motto: 'All in the game, all in game.',
 } as const;
 
 export const NAV = [
@@ -26,19 +24,16 @@ export const NAV = [
 ] as const;
 
 export const SOCIALS = [
-  { label: '邮箱', value: SITE.email, href: `mailto:${SITE.email}` },
-  { label: '网站', value: 'sanye.design', href: SITE.url },
-  { label: '微博', value: '@三页设计', href: 'https://weibo.com/' },
-  { label: '公众号', value: '三页设计笔记' },
+  { label: 'GitHub', value: '@LING71671', href: 'https://github.com/LING71671' },
 ] as const;
 
 /** 便签快捷链接（书桌上的便签热点内容） */
 export const NOTES = [
-  { label: '写作习惯的养成', href: '/posts/writing-habit/', external: false },
-  { label: '阅读清单', href: '/projects/', external: false },
-  { label: 'MDN Web Docs', href: 'https://developer.mozilla.org/', external: true },
-  { label: 'Three.js 文档', href: 'https://threejs.org/docs/', external: true },
-  { label: '待办：给日历页加上季节配色', href: null, external: false },
+  { label: 'Open-ClaudeCode 源码考古', href: 'https://github.com/LING71671/Open-ClaudeCode', external: true },
+  { label: 'open-reverselab 知识库', href: 'https://github.com/LING71671/open-reverselab', external: true },
+  { label: 'Frida 文档', href: 'https://frida.re/docs/home/', external: true },
+  { label: 'MCP 协议规范', href: 'https://modelcontextprotocol.io/', external: true },
+  { label: '待办：给知识库补 PE 壳的几篇', href: null, external: false },
 ] as const;
 
 /** 评论配置：v1 关闭，后续可切换为 giscus */

@@ -2,7 +2,7 @@ import { defineCollection, reference, z } from 'astro:content';
 import { glob } from 'astro/loaders';
 
 /** 分类同时用作面包屑第三级与项目页 tab */
-export const CATEGORIES = ['设计', '开发', '灵感', '其他'] as const;
+export const CATEGORIES = ['逆向', 'AI', '工具', '随笔'] as const;
 
 const posts = defineCollection({
   loader: glob({ pattern: '**/*.md', base: './src/content/posts' }),
@@ -12,7 +12,7 @@ const posts = defineCollection({
       description: z.string().max(160),
       pubDate: z.coerce.date(),
       updatedDate: z.coerce.date().optional(),
-      category: z.enum(CATEGORIES).default('设计'),
+      category: z.enum(CATEGORIES).default('随笔'),
       tags: z.array(z.string()).default([]),
       cover: image().optional(),
       coverAlt: z.string().optional(),

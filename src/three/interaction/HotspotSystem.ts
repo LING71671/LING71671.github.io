@@ -5,7 +5,7 @@ import type { EventBus } from '../core/EventBus';
 import { NODES, type NodeName } from '../config/naming';
 import { HOTSPOTS, type HotspotId } from '../../lib/hotspots';
 import { LAYOUT } from '../config/layout';
-import { easeOutCubic } from '../utils/tween';
+import { easeOutCubic, type EaseFn, type Tween } from '../utils/tween';
 
 /** 热点 id → 锚点节点 */
 const ANCHORS: Record<HotspotId, NodeName> = {
@@ -19,15 +19,80 @@ const ANCHORS: Record<HotspotId, NodeName> = {
   window: NODES.windowRoot,
 };
 
+/** 桌面上有「接触光晕」的热点（窗户在墙上、抽屉在桌沿下，均不适用） */
+const GLOW_IDS = new Set<HotspotId>([
+  'notebook',
+  'monitor',
+  'calendar',
+  'coffee',
+  'sticky',
+  'lamp',
+]);
+
+/** hover 参数：克制的物理反馈，不染色 */
+const HOVER = {
+  lift: 0, // 不抬起：物件浮空看着假，反馈只靠接触光晕与表面反光
+  drawerPeek: 0.014, // 抽屉不抬起，改为轻微探出
+  glowOpacity: 0.2, // 接触光晕峰值透明度
+  glowOpacityLamp: 0.13, // 台灯自身发光，光晕更收敛
+  glowColor: 0xffb46b, // 暖琥珀
+  sheenEnv: 0.22, // envMapIntensity 增益比例
+  sheenRough: 0.1, // roughness 减益比例
+  lampShadeE: 0.05, // 灯罩暖起峰值
+  inDur: 0.24,
+  outDur: 0.18,
+} as const;
+
+/** 轻微回弹（重量感），过冲约 5% */
+const easeOutBackSoft: EaseFn = (t) => {
+  const c = 1.0;
+  const u = t - 1;
+  return 1 + (c + 1) * u * u * u + c * u * u;
+};
+
+/** 径向渐变光晕贴图：全局仅生成一次并复用 */
+let glowTexture: THREE.CanvasTexture | null = null;
+function getGlowTexture(): THREE.CanvasTexture {
+  if (glowTexture) return glowTexture;
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  g.addColorStop(0, 'rgba(255,255,255,0.9)');
+  g.addColorStop(0.3, 'rgba(255,255,255,0.5)');
+  g.addColorStop(0.65, 'rgba(255,255,255,0.14)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  glowTexture = new THREE.CanvasTexture(canvas);
+  glowTexture.colorSpace = THREE.SRGBColorSpace;
+  return glowTexture;
+}
+
+interface HoverMat {
+  mat: THREE.MeshStandardMaterial;
+  rough: number;
+  env: number;
+}
+
 /**
- * 热点系统：不可见命中盒（由锚点包围盒生成）、hover 高亮（浮起 + 自发光）、
- * 抽屉动画、屏幕坐标投影（HUD 提示与面板展开起点）。
+ * 热点系统：不可见命中盒（由锚点包围盒生成）、hover 反馈（桌面接触光晕 +
+ * 微抬起 + 表面反光微增，不做整体染色）、抽屉动画、屏幕坐标投影。
  */
 export class HotspotSystem {
   private hitboxes: THREE.Mesh[] = [];
   private hoveredId: HotspotId | null = null;
   private baseY = new Map<HotspotId, number>();
-  private emissiveMats = new Map<HotspotId, THREE.MeshStandardMaterial[]>();
+  private hoverMats = new Map<HotspotId, HoverMat[]>();
+  private lampShadeMats: THREE.MeshStandardMaterial[] = [];
+  private glows = new Map<HotspotId, THREE.Mesh>();
+  private hoverK = new Map<HotspotId, number>();
+  private hoverTweens = new Map<HotspotId, Tween>();
+  private reducedMotion =
+    typeof matchMedia === 'function' &&
+    matchMedia('(prefers-reduced-motion: reduce)').matches;
   private drawerOpen = false;
 
   constructor(
@@ -36,11 +101,19 @@ export class HotspotSystem {
     private bus: EventBus,
   ) {}
 
-  /** 场景就绪后构建命中盒并克隆材质（高亮不影响共享材质） */
+  /** 场景就绪后构建命中盒并克隆材质（hover 微调不影响共享材质） */
   build(): void {
+    this.resetHover();
     for (const hitbox of this.hitboxes) hitbox.removeFromParent();
     this.hitboxes = [];
-    this.emissiveMats.clear();
+    this.hoverMats.clear();
+    this.lampShadeMats = [];
+    for (const glow of this.glows.values()) {
+      glow.removeFromParent();
+      glow.geometry.dispose();
+      (glow.material as THREE.Material).dispose();
+    }
+    this.glows.clear();
 
     for (const id of Object.keys(ANCHORS) as HotspotId[]) {
       const anchor = this.registry.get(ANCHORS[id]);
@@ -64,19 +137,70 @@ export class HotspotSystem {
 
       this.baseY.set(id, anchor.position.y);
 
-      // 克隆锚点下的标准材质（每热点独立，hover 提亮）
-      const mats: THREE.MeshStandardMaterial[] = [];
+      // 克隆锚点下的标准材质（每热点独立；hover 仅微调反光，不改颜色）
+      const mats: HoverMat[] = [];
       anchor.traverse((obj) => {
         if (obj instanceof THREE.Mesh && obj.material instanceof THREE.MeshStandardMaterial) {
-          // 灯泡/屏幕材质本身承担自发光职责，不参与 hover 提亮
+          // 灯泡/屏幕材质本身承担自发光职责，不参与 hover 微调
           if (obj.name === NODES.lampBulb || obj.name === NODES.monitorScreen) return;
           const cloned = obj.material.clone();
           obj.material = cloned;
-          mats.push(cloned);
+          mats.push({ mat: cloned, rough: cloned.roughness, env: cloned.envMapIntensity });
         }
       });
-      this.emissiveMats.set(id, mats);
+      this.hoverMats.set(id, mats);
+
+      // 台灯：灯头（灯罩）单独收集，hover 时极轻微暖起
+      if (id === 'lamp') {
+        const head = this.registry.get(NODES.lampHead);
+        head?.traverse((obj) => {
+          if (
+            obj instanceof THREE.Mesh &&
+            obj.material instanceof THREE.MeshStandardMaterial &&
+            obj.name !== NODES.lampBulb
+          ) {
+            obj.material.emissive.setHex(0xffc98a);
+            this.lampShadeMats.push(obj.material);
+          }
+        });
+      }
+
+      // 接触光晕：物体正下方桌面上的椭圆暖光（加色混合，默认隐藏）
+      if (GLOW_IDS.has(id)) {
+        const gw = Math.max(0.13, size.x * 1.45);
+        const gd = Math.max(0.13, size.z * 1.45);
+        const glow = new THREE.Mesh(
+          new THREE.PlaneGeometry(gw, gd),
+          new THREE.MeshBasicMaterial({
+            map: getGlowTexture(),
+            color: HOVER.glowColor,
+            transparent: true,
+            opacity: 0,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            toneMapped: false,
+          }),
+        );
+        glow.name = `glow_${id}`;
+        glow.rotation.x = -Math.PI / 2;
+        glow.position.set(center.x, box.min.y + 0.0015, center.z);
+        glow.visible = false;
+        glow.renderOrder = 1;
+        this.manager.scene.add(glow);
+        this.glows.set(id, glow);
+      }
     }
+  }
+
+  /** 归零所有 hover 状态（重建前调用，避免抬起量污染 baseY） */
+  private resetHover(): void {
+    for (const tween of this.hoverTweens.values()) tween.cancel();
+    this.hoverTweens.clear();
+    for (const id of [...this.hoverK.keys()]) {
+      if ((this.hoverK.get(id) ?? 0) > 0) this.applyHover(id, 0);
+    }
+    this.hoverK.clear();
+    this.hoveredId = null;
   }
 
   get raycastTargets(): THREE.Object3D[] {
@@ -113,30 +237,68 @@ export class HotspotSystem {
   }
 
   private animateHighlight(id: HotspotId, on: boolean): void {
+    if (!this.registry.get(ANCHORS[id])) return;
+    this.hoverTweens.get(id)?.cancel();
+
+    const from = this.hoverK.get(id) ?? 0;
+    const to = on ? 1 : 0;
+    if (from === to) return;
+
+    // 减动效：瞬时（光晕/反光直接到位，无位移过程可感知）
+    const duration = this.reducedMotion ? 0.01 : on ? HOVER.inDur : HOVER.outDur;
+    const ease = on && !this.reducedMotion ? easeOutBackSoft : easeOutCubic;
+    const tween = this.manager.tweens.run({
+      duration,
+      ease,
+      onUpdate: (t) => {
+        const k = from + (to - from) * t;
+        this.hoverK.set(id, k);
+        this.applyHover(id, k);
+      },
+      onComplete: () => this.hoverTweens.delete(id),
+    });
+    this.hoverTweens.set(id, tween);
+  }
+
+  /** 以 hover 进度 k（0-1，可轻微过冲）驱动全部反馈通道 */
+  private applyHover(id: HotspotId, k: number): void {
     const anchor = this.registry.get(ANCHORS[id]);
     if (!anchor) return;
-    // 窗户不浮起（固定在墙上）
-    const canLift = id !== 'window';
-    const baseY = this.baseY.get(id) ?? anchor.position.y;
-    const fromY = anchor.position.y;
-    const toY = on && canLift ? baseY + 0.008 : baseY;
 
-    const mats = this.emissiveMats.get(id) ?? [];
-    const fromE = mats[0]?.emissiveIntensity ?? 0;
-    const toE = on ? 0.22 : 0;
-    for (const mat of mats) mat.emissive.setHex(0xc9a45c);
+    // 微抬起：窗户固定在墙上、抽屉嵌在桌体内，均不抬
+    if (id !== 'window' && id !== 'drawer' && !this.reducedMotion) {
+      const baseY = this.baseY.get(id);
+      if (baseY !== undefined) anchor.position.y = baseY + HOVER.lift * k;
+    }
 
-    this.manager.tweens.run({
-      duration: 0.18,
-      ease: easeOutCubic,
-      onUpdate: (t) => {
-        anchor.position.y = fromY + (toY - fromY) * t;
-        for (const mat of mats) {
-          mat.emissiveIntensity = fromE + (toE - fromE) * t;
-        }
-        this.manager.invalidate();
-      },
-    });
+    // 抽屉：轻微探出一条缝（打开状态下不干扰开合动画）
+    if (id === 'drawer' && !this.drawerOpen && !this.reducedMotion) {
+      const slide = this.registry.get(NODES.drawerSlide);
+      if (slide) slide.position.z = HOVER.drawerPeek * Math.max(0, k);
+    }
+
+    // 接触光晕淡入淡出
+    const glow = this.glows.get(id);
+    if (glow) {
+      const peak = id === 'lamp' ? HOVER.glowOpacityLamp : HOVER.glowOpacity;
+      const mat = glow.material as THREE.MeshBasicMaterial;
+      mat.opacity = Math.max(0, peak * k);
+      glow.visible = mat.opacity > 0.004;
+    }
+
+    // 表面反光微增（不改颜色）：envMap 稍亮、粗糙度稍降
+    for (const entry of this.hoverMats.get(id) ?? []) {
+      entry.mat.envMapIntensity = entry.env * (1 + HOVER.sheenEnv * k);
+      entry.mat.roughness = Math.max(0.04, entry.rough * (1 - HOVER.sheenRough * k));
+    }
+
+    // 台灯灯罩极轻微暖起
+    if (id === 'lamp') {
+      const e = HOVER.lampShadeE * Math.max(0, k);
+      for (const mat of this.lampShadeMats) mat.emissiveIntensity = e;
+    }
+
+    this.manager.invalidate();
   }
 
   /** 抽屉滑出/收回（原点在关闭位，+Z 拉出） */

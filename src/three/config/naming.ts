@@ -31,6 +31,8 @@ export const NODES = {
   // —— 热点物体组（原点在自身底部中心） ——
   notebookRoot: 'notebook_root',
   calendarRoot: 'calendar_root',
+  /** 日历正面：运行时绘制 GitHub 提交记录的贴图承载面 */
+  calendarFace: 'calendar_face',
   coffeeRoot: 'coffee_root',
   stickyRoot: 'sticky_root',
   windowRoot: 'window_root',

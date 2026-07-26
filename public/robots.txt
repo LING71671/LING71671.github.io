@@ -2,4 +2,4 @@ User-agent: *
 Allow: /
 Disallow: /partials/
 
-Sitemap: https://sanye.design/sitemap-index.xml
+Sitemap: https://ling71671.github.io/sitemap-index.xml

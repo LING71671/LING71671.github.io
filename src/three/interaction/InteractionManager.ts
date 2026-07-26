@@ -8,15 +8,23 @@ import type { EventBus } from '../core/EventBus';
 import { NODES } from '../config/naming';
 import type { HotspotId } from '../../lib/hotspots';
 
-export type InteractionMode = 'disabled' | 'entry' | 'scene';
+export type InteractionMode = 'disabled' | 'entry' | 'scene' | 'book';
 
 /**
  * 指针输入统一入口：
- * entry 态 → 时钟拖动；scene 态 → hover / 点击 / 有限环视 / 视差。
+ * entry 态 → 时钟拖动；scene 态 → hover / 点击 / 有限环视 / 视差；
+ * book 态（聚焦笔记本就地阅读）→ 点击优先交给 BookRenderer，未命中书页视为退出意图。
  * >8px 位移认定为环视拖拽（与点击区分）；触摸设备禁视差。
  */
 export class InteractionManager {
   mode: InteractionMode = 'disabled';
+
+  /** book 态点击分发：返回 true 表示已被书页消费 */
+  onBookClick: ((raycaster: THREE.Raycaster) => boolean) | null = null;
+  /** book 态点击未命中书页（一般接 unfocus 退出阅读） */
+  onBookMiss: (() => void) | null = null;
+  /** book 态悬停命中测试（指针样式反馈） */
+  onBookHover: ((raycaster: THREE.Raycaster) => boolean) | null = null;
 
   private raycaster = new THREE.Raycaster();
   private ndc = new THREE.Vector2();
@@ -87,6 +95,8 @@ export class InteractionManager {
       return;
     }
 
+    if (this.mode === 'book') return; // book：抬起时统一分发
+
     // scene：记录按下时的热点，抬起仍在其上才算点击
     this.downHotspot = this.hotspots.pick(this.raycaster);
   }
@@ -98,6 +108,15 @@ export class InteractionManager {
     if (this.mode === 'entry') {
       if (this.pointerDown) this.clock.onDragMove(this.raycaster.ray);
       else this.updateEntryCursor();
+      return;
+    }
+
+    if (this.mode === 'book') {
+      // 阅读态：无环视 / 视差，仅指针样式反馈
+      if (!this.pointerDown && !this.isTouch) {
+        const overBook = this.onBookHover?.(this.raycaster) ?? false;
+        this.manager.canvas.style.cursor = overBook ? 'pointer' : 'default';
+      }
       return;
     }
 
@@ -137,6 +156,17 @@ export class InteractionManager {
 
     if (this.mode === 'entry') {
       this.clock.onDragEnd();
+      return;
+    }
+
+    if (this.mode === 'book') {
+      // 位移小于阈值才算点击（与拖拽区分）
+      const moved = Math.hypot(e.clientX - this.downPos.x, e.clientY - this.downPos.y);
+      if (moved <= 8) {
+        this.updateNdc(e);
+        const handled = this.onBookClick?.(this.raycaster) ?? false;
+        if (!handled) this.onBookMiss?.();
+      }
       return;
     }
 

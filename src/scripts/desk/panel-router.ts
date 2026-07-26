@@ -1,6 +1,7 @@
 import type { DeskScene } from '../../three/main';
 import { HOTSPOTS, postPartial, type HotspotId } from '../../lib/hotspots';
 import { withBase } from '../../lib/url';
+import { SITE } from '../../config/site';
 import type { OverlayFSM } from './overlay-fsm';
 import { session, KEYS } from './storage';
 
@@ -85,6 +86,12 @@ export class PanelRouter {
   /** 热点点击入口（scene 事件驱动） */
   async openHotspot(id: HotspotId): Promise<void> {
     const def = HOTSPOTS[id];
+    if (def.behavior === 'in-scene') {
+      // 就地阅读：只推近相机，内容由 3D 场景在物体表面渲染（不开面板、不 pushState）
+      session.set(KEYS.lastHotspot, id);
+      await this.api.focusHotspot(id);
+      return;
+    }
     if (def.behavior === 'content') {
       await this.navigate(
         { hotspot: id, partial: def.partial!, href: def.href! },
@@ -132,7 +139,7 @@ export class PanelRouter {
       const html = await this.fetchPartial(route.partial);
       if (html) {
         const meta = this.overlay.setContent(html);
-        if (meta.title) document.title = `${meta.title} · 三页的书桌`;
+        if (meta.title) document.title = `${meta.title} · ${SITE.title}`;
       }
       return;
     }
@@ -152,7 +159,7 @@ export class PanelRouter {
     const cached = this.cache.get(route.partial);
     if (cached) {
       const meta = this.overlay.setContent(cached);
-      if (meta.title) document.title = `${meta.title} · 三页的书桌`;
+      if (meta.title) document.title = `${meta.title} · ${SITE.title}`;
     } else {
       this.overlay.showSkeleton(HOTSPOTS[route.hotspot].label);
     }
@@ -162,7 +169,7 @@ export class PanelRouter {
       const html = await this.fetchPartial(route.partial);
       if (html) {
         const meta = this.overlay.setContent(html);
-        if (meta.title) document.title = `${meta.title} · 三页的书桌`;
+        if (meta.title) document.title = `${meta.title} · ${SITE.title}`;
       }
     }
     this.api.setRenderPaused(true);
@@ -203,7 +210,7 @@ export class PanelRouter {
       : null;
     await Promise.all([this.overlay.close(rect), this.api.unfocus()]);
     this.currentHotspot = null;
-    document.title = '三页的书桌';
+    document.title = SITE.title;
     this.closing = false;
   }
 

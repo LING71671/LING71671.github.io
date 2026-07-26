@@ -4,6 +4,7 @@ import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { NODES } from '../config/naming';
 import { LAYOUT } from '../config/layout';
 import { createScreenTexture } from '../placeholder/PlaceholderDesk';
+import { mountCalendarFace } from '../content/CalendarFace';
 
 /**
  * GLTF 资产加载：clock.glb 先行（入口时钟），desk.glb 随后台并载。
@@ -30,7 +31,7 @@ export class AssetLoader {
    * 导入后处理：阴影标记、运行时控制材质的确定性修正、
    * 补齐可选的分针命中代理。占位与 GLTF 共享同一命名契约。
    */
-  static prepare(root: THREE.Object3D): void {
+  static prepare(root: THREE.Object3D, invalidate: () => void = () => {}): void {
     root.traverse((obj) => {
       if (!(obj instanceof THREE.Mesh)) return;
       const name = obj.name;
@@ -57,6 +58,9 @@ export class AssetLoader {
         material.emissiveMap = texture;
         material.emissiveIntensity = 0.5;
         material.needsUpdate = true;
+      } else if (name === NODES.calendarFace) {
+        // 台历正面：GitHub 提交记录热力格（运行时绘制）
+        mountCalendarFace(obj, invalidate);
       } else if (name === 'clock_ticks') {
         material.emissive.setHex(0xc9a45c);
         material.emissiveIntensity = 0;

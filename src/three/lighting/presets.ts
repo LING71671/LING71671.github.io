@@ -16,6 +16,8 @@ export interface LightingValues {
   clockFillI: number;
   /** 窗外天空混合（0 夜 – 1 昼） */
   skyBlend: number;
+  /** 环境贴图强度（PBR 反射与漫射基底） */
+  envI: number;
 }
 
 export function cloneValues(v: LightingValues): LightingValues {
@@ -42,6 +44,7 @@ export function lerpValues(
   out.exposure = a.exposure + (b.exposure - a.exposure) * t;
   out.clockFillI = a.clockFillI + (b.clockFillI - a.clockFillI) * t;
   out.skyBlend = a.skyBlend + (b.skyBlend - a.skyBlend) * t;
+  out.envI = a.envI + (b.envI - a.envI) * t;
   out.hemiSky.lerpColors(a.hemiSky, b.hemiSky, t);
   out.hemiGround.lerpColors(a.hemiGround, b.hemiGround, t);
   out.sunColor.lerpColors(a.sunColor, b.sunColor, t);
@@ -51,10 +54,10 @@ export function lerpValues(
 
 /** 白天：自然光（窗），台灯关，色温偏冷自然，影子从左向右 */
 export const DAY: LightingValues = {
-  hemiI: 0.62,
+  hemiI: 0.3,
   hemiSky: new THREE.Color(0xdbe8f0),
   hemiGround: new THREE.Color(0x8a6a42),
-  sunI: 1.9,
+  sunI: 1.6,
   sunColor: new THREE.Color(0xfff1d8),
   lampI: 0,
   lampColor: new THREE.Color(0xffb46b),
@@ -63,11 +66,12 @@ export const DAY: LightingValues = {
   exposure: 1.0,
   clockFillI: 0,
   skyBlend: 1,
+  envI: 0.4,
 };
 
 /** 夜晚：台灯暖光（琥珀），影子从右向左柔和，显示器略暗护眼 */
 export const NIGHT: LightingValues = {
-  hemiI: 0.14,
+  hemiI: 0.08,
   hemiSky: new THREE.Color(0x2a2438),
   hemiGround: new THREE.Color(0x1a130c),
   sunI: 0,
@@ -79,11 +83,12 @@ export const NIGHT: LightingValues = {
   exposure: 0.85,
   clockFillI: 0,
   skyBlend: 0,
+  envI: 0.16,
 };
 
 /** 入口：昏暗、时间停住的房间，只有时钟被一点余光照亮 */
 export const ENTRY: LightingValues = {
-  hemiI: 0.07,
+  hemiI: 0.05,
   hemiSky: new THREE.Color(0x232028),
   hemiGround: new THREE.Color(0x140f0a),
   sunI: 0,
@@ -95,6 +100,7 @@ export const ENTRY: LightingValues = {
   exposure: 0.72,
   clockFillI: 1.1,
   skyBlend: 0.08,
+  envI: 0.07,
 };
 
 /** 由本地时间得到昼夜混合值（0 夜 – 1 昼；5-8 时与 17-22 时为过渡带） */

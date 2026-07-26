@@ -63,33 +63,90 @@ function cylinder(
   return mesh;
 }
 
-/** 显示器屏幕内容：CanvasTexture 画一个暖色调项目页面 */
+/** 显示器屏幕内容：CanvasTexture 画一个暖色调的代码编辑器界面 */
 export function createScreenTexture(): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 288;
+  canvas.width = 1024;
+  canvas.height = 576;
   const ctx = canvas.getContext('2d')!;
 
-  ctx.fillStyle = '#14110d';
-  ctx.fillRect(0, 0, 512, 288);
-  // 顶栏
-  ctx.fillStyle = '#241f18';
-  ctx.fillRect(0, 0, 512, 36);
-  ctx.fillStyle = '#c9a45c';
-  ctx.font = '16px sans-serif';
-  ctx.fillText('Projects', 16, 24);
-  // 项目卡片
-  const colors = ['#8a6a42', '#5f7a4f', '#a8853c', '#6b4a2b'];
-  for (let i = 0; i < 4; i++) {
-    const x = 20 + (i % 2) * 240;
-    const y = 52 + Math.floor(i / 2) * 112;
-    ctx.fillStyle = colors[i]!;
-    ctx.fillRect(x, y, 220, 72);
-    ctx.fillStyle = '#e9dcc2';
-    ctx.fillRect(x, y + 80, 140, 8);
-    ctx.fillStyle = '#7d6d52';
-    ctx.fillRect(x, y + 94, 90, 6);
+  const rounded = (x: number, y: number, w: number, h: number, r: number) => {
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, r);
+    ctx.fill();
+  };
+
+  // 底色与轻微上暗下亮的氛围
+  const bg = ctx.createLinearGradient(0, 0, 0, 576);
+  bg.addColorStop(0, '#171310');
+  bg.addColorStop(1, '#1f1913');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, 1024, 576);
+
+  // 标题栏
+  ctx.fillStyle = '#26201a';
+  ctx.fillRect(0, 0, 1024, 52);
+  for (let i = 0; i < 3; i++) {
+    ctx.fillStyle = ['#c0574f', '#c9a45c', '#5f7a4f'][i]!;
+    ctx.beginPath();
+    ctx.arc(30 + i * 30, 26, 8, 0, Math.PI * 2);
+    ctx.fill();
   }
+  ctx.fillStyle = '#c9a45c';
+  ctx.font = '600 22px ui-monospace, monospace';
+  ctx.fillText('ling@desk: ~/projects', 130, 34);
+
+  // 侧栏
+  ctx.fillStyle = '#211b15';
+  ctx.fillRect(0, 52, 64, 524);
+  for (let i = 0; i < 5; i++) {
+    ctx.fillStyle = i === 0 ? '#c9a45c' : '#4d4232';
+    rounded(20, 84 + i * 64, 24, 24, 6);
+  }
+
+  // 代码行（暖色语法高亮的抽象化）
+  const lineColors = ['#8a7a62', '#c9a45c', '#9db08a', '#b3a184', '#7d6d52'];
+  let y = 92;
+  const rand = (seed: number) => ((seed * 9301 + 49297) % 233280) / 233280;
+  for (let i = 0; i < 18; i++) {
+    let x = 100 + (i % 4 === 1 ? 40 : i % 4 === 2 ? 80 : 0);
+    const segments = 2 + Math.floor(rand(i * 7) * 3);
+    for (let s = 0; s < segments; s++) {
+      const w = 40 + rand(i * 13 + s * 5) * 150;
+      ctx.fillStyle = lineColors[(i + s) % lineColors.length]!;
+      rounded(x, y, w, 12, 6);
+      x += w + 18;
+      if (x > 620) break;
+    }
+    y += 26;
+  }
+
+  // 右侧预览小窗：桌面场景缩略（呼应站点自身）
+  ctx.fillStyle = '#26201a';
+  rounded(700, 92, 280, 200, 10);
+  const sky = ctx.createLinearGradient(0, 100, 0, 200);
+  sky.addColorStop(0, '#9cc4e0');
+  sky.addColorStop(1, '#f4e8cf');
+  ctx.fillStyle = sky;
+  rounded(720, 112, 240, 90, 6);
+  ctx.fillStyle = '#6b4a2b';
+  rounded(720, 210, 240, 60, 6);
+  ctx.fillStyle = '#e9dcc2';
+  rounded(760, 190, 60, 36, 4);
+  ctx.fillStyle = '#2b2117';
+  rounded(850, 180, 70, 46, 4);
+
+  // 右下状态块
+  ctx.fillStyle = '#211b15';
+  rounded(700, 316, 280, 180, 10);
+  ctx.fillStyle = '#9db08a';
+  ctx.font = '600 20px ui-monospace, monospace';
+  ctx.fillText('✓ build passing', 724, 356);
+  ctx.fillStyle = '#b3a184';
+  ctx.font = '16px ui-monospace, monospace';
+  ctx.fillText('928 stars · 74 followers', 724, 390);
+  ctx.fillText('all in the game', 724, 420);
+
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;

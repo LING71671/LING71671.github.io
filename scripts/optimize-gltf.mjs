@@ -21,33 +21,44 @@ for (const file of files) {
   copyFileSync(path, backup);
   const before = statSync(path).size;
 
-  // 关键：禁用 join/flatten/simplify —— 命名契约节点（指针/抽屉/锚点）不可合并拍扁
-  execFileSync(
-    'npx',
-    [
-      'gltf-transform',
-      'optimize',
-      path,
-      path,
-      '--compress',
-      'meshopt',
-      '--texture-compress',
-      'false',
-      '--join',
-      'false',
-      '--flatten',
-      'false',
-      '--simplify',
-      'false',
-      // palette 会把纯色材质并成调色板贴图并重写 UV，破坏运行时贴图槽（屏幕）
-      '--palette',
-      'false',
-      // 屏幕材质的贴图在运行时才注入，构建期 UV 看似未使用，不能剪
-      '--prune-attributes',
-      'false',
-    ],
-    { stdio: 'inherit', shell: process.platform === 'win32' },
-  );
+  const run = (args) =>
+    execFileSync('npx', ['gltf-transform', ...args], {
+      stdio: 'inherit',
+      shell: process.platform === 'win32',
+    });
+
+  // 1) 清理：去重 + 剪枝（保留顶点属性 —— 屏幕贴图运行时才注入，UV 不能剪）
+  run(['dedup', path, path]);
+  run(['prune', path, path, '--keep-attributes', 'true']);
+
+  // 2) 贴图：缩到 512 并转 WebP（CC0 模型自带 1k 贴图，体积占大头；
+  //    three.js 原生支持 WebP，无需额外解码器）
+  //    窗外实景是画面里唯一的大面积「照片」，缩到 512 会糊，单独保留 1024。
+  run([
+    'resize', path, path,
+    '--width', '512', '--height', '512',
+    '--pattern', '!(*window_view*)',
+  ]);
+  run([
+    'resize', path, path,
+    '--width', '1024', '--height', '1024',
+    '--pattern', '*window_view*',
+  ]);
+  run(['webp', path, path, '--quality', '82']);
+
+  // 3) 量化：法线/UV 提高到 12/14 位。默认 8 位法线会在平整纸面上
+  //    与环境贴图反射叠出可见的三角形条纹（斜纹伪影），必须提精度。
+  run([
+    'quantize', path, path,
+    '--quantize-position', '14',
+    '--quantize-normal', '12',
+    '--quantize-texcoord', '14',
+    '--quantize-color', '8',
+  ]);
+
+  // 4) meshopt 压缩（不再让 optimize 顺手做 join/flatten/palette/simplify，
+  //    那些会破坏命名契约节点与运行时贴图槽）
+  run(['meshopt', path, path, '--level', 'medium']);
 
   const after = statSync(path).size;
   console.log(

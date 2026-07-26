@@ -1,8 +1,11 @@
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import type { SceneManager } from '../core/SceneManager';
 import type { NodeRegistry } from '../core/NodeRegistry';
 import { NODES } from '../config/naming';
 import { CLOCK_CENTER } from '../config/layout';
+import { withBase } from '../../lib/url';
 import {
   DAY,
   NIGHT,
@@ -51,6 +54,7 @@ export class LightingSystem {
     this.sun.position.set(-1.9, 2.5, 0.7);
     this.sun.target.position.set(0.3, 0.75, -0.1);
     this.sun.castShadow = true;
+    this.sun.shadow.intensity = 0.82; // 柔化阴影，避免死黑
     this.sun.shadow.mapSize.set(1024, 1024);
     this.sun.shadow.camera.left = -1.4;
     this.sun.shadow.camera.right = 1.4;
@@ -64,7 +68,8 @@ export class LightingSystem {
     this.lampSpot = new THREE.SpotLight(0xffb46b, 0, 3.2, 0.62, 0.6, 1.4);
     this.lampSpot.position.set(-0.5, 1.22, -0.14);
     this.lampSpot.target.position.set(0.05, 0.75, 0.08);
-    this.lampSpot.shadow.mapSize.set(1024, 1024);
+    this.lampSpot.shadow.intensity = 0.88;
+    this.lampSpot.shadow.mapSize.set(512, 512);
     this.lampSpot.shadow.bias = -0.002;
     scene.add(this.lampSpot, this.lampSpot.target);
 
@@ -73,10 +78,33 @@ export class LightingSystem {
     scene.add(this.clockFill);
 
     this.sky = new SkyWindow(scene);
+    this.setupEnvironment();
 
     this.current = cloneValues(ENTRY);
     this.applyValues(this.current);
     this.updateShadowCasters();
+  }
+
+  /**
+   * 环境光照（金属/PBR 材质的反射来源）：
+   * 先用 RoomEnvironment 立即可用，HDRI（CC0, Poly Haven artist_workshop）
+   * 异步加载完成后替换，得到自然的室内反射与漫射。
+   */
+  private setupEnvironment(): void {
+    const pmrem = new THREE.PMREMGenerator(this.manager.renderer);
+    this.manager.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    new RGBELoader()
+      .loadAsync(withBase('/env/artist_workshop_1k.hdr'))
+      .then((hdr) => {
+        const envMap = pmrem.fromEquirectangular(hdr).texture;
+        hdr.dispose();
+        this.manager.scene.environment = envMap;
+        pmrem.dispose();
+        this.manager.invalidate();
+      })
+      .catch(() => {
+        pmrem.dispose(); // HDRI 加载失败时保留 RoomEnvironment
+      });
   }
 
   static initialDayBlend(): number {
@@ -113,6 +141,8 @@ export class LightingSystem {
     this.state = { ...this.state, ...next };
     const from = cloneValues(this.current);
     const to = this.computeTarget(this.state);
+    // 阴影贴图重建是过渡期掉帧的主因：节流到 ≥150ms 一次，结束时收口
+    let lastShadowAt = 0;
 
     return new Promise((resolve) => {
       this.manager.tweens.run({
@@ -121,8 +151,11 @@ export class LightingSystem {
         onUpdate: (t) => {
           lerpValues(this.current, from, to, t);
           this.applyValues(this.current);
-          // 过渡期间粗粒度刷新阴影（占位场景开销可忽略）
-          this.manager.updateShadows();
+          const now = performance.now();
+          if (now - lastShadowAt > 150) {
+            lastShadowAt = now;
+            this.manager.updateShadows();
+          }
         },
         onComplete: () => {
           this.updateShadowCasters();
@@ -158,6 +191,7 @@ export class LightingSystem {
     this.lampSpot.color.copy(v.lampColor);
     this.clockFill.intensity = v.clockFillI;
     this.manager.renderer.toneMappingExposure = v.exposure;
+    this.manager.scene.environmentIntensity = v.envI;
     this.sky.setBlend(v.skyBlend);
 
     const bulb = this.registry.get(NODES.lampBulb);

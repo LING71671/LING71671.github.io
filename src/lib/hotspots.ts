@@ -16,6 +16,8 @@ export type HotspotId =
 export type HotspotBehavior =
   /** 打开内容面板（pushState 到真实 URL） */
   | 'content'
+  /** 就地阅读：只推近相机，内容渲染在 3D 物体表面（不开面板、不 pushState） */
+  | 'in-scene'
   /** 小型弹层（不改 URL，如便签） */
   | 'popover'
   /** 场景状态切换（台灯三档） */
@@ -38,8 +40,9 @@ export const HOTSPOTS: Record<HotspotId, HotspotDef> = {
   notebook: {
     id: 'notebook',
     label: '笔记本',
-    hint: '博客文章',
-    behavior: 'content',
+    hint: '博客文章 · 就地翻阅',
+    // 就地阅读：文章直接渲染在书页上；/posts/ 完整页面与深链仍然可用（SEO）
+    behavior: 'in-scene',
     partial: '/partials/posts/',
     href: '/posts/',
   },

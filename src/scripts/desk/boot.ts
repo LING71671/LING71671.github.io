@@ -102,22 +102,56 @@ async function run(): Promise<void> {
     }, ms);
   };
 
-  // —— 事件接线 ——
+  // —— 悬停标签：短延迟防掠过闪烁、平滑跟随、视口边缘自动翻转 ——
+  let tipShowTimer = 0;
+  let tipKey: string | null = null;
+
+  const moveTip = (x: number, y: number, instant: boolean): void => {
+    if (!tip) return;
+    const w = tip.offsetWidth;
+    const h = tip.offsetHeight;
+    let tx = x + 16;
+    let ty = y + 22;
+    if (tx + w + 8 > window.innerWidth) tx = x - w - 14;
+    if (ty + h + 8 > window.innerHeight) ty = y - h - 16;
+    if (instant) tip.style.transition = 'none';
+    tip.style.transform = `translate3d(${Math.round(tx)}px, ${Math.round(ty)}px, 0)`;
+    if (instant) {
+      void tip.offsetWidth; // 强制回流，随后恢复 CSS 过渡
+      tip.style.transition = '';
+    }
+  };
+
+  const hideTip = (): void => {
+    clearTimeout(tipShowTimer);
+    tipKey = null;
+    tip?.classList.remove('show');
+  };
+
   api.on('hotspot:hover', ({ id, label, hint, x, y }) => {
     if (!tip) return;
     if (!id) {
-      tip.hidden = true;
+      hideTip();
       return;
     }
-    tip.innerHTML = `<strong>${label}</strong><span>${hint}</span>`;
-    tip.style.left = `${x + 14}px`;
-    tip.style.top = `${y + 14}px`;
-    tip.hidden = false;
+    const fresh = tipKey === null;
+    if (tipKey !== id) {
+      tipKey = id;
+      tip.innerHTML = `<strong>${label}</strong><span>${hint}</span>`;
+    }
+    if (fresh) {
+      // 首次出现：位置直接就位，延迟 80ms 淡入（掠过不闪）
+      moveTip(x, y, true);
+      clearTimeout(tipShowTimer);
+      tipShowTimer = window.setTimeout(() => tip.classList.add('show'), 80);
+    } else {
+      moveTip(x, y, false);
+    }
     router.prefetchHotspot(id);
   });
 
   api.on('hotspot:click', ({ id }) => {
-    if (tip) tip.hidden = true;
+    hideTip();
     if (id === 'lamp') {
       const current = window.deskTheme?.getLamp() ?? 'ambient';
       const next: LampMode =

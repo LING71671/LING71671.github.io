@@ -10,8 +10,9 @@ import { HotspotSystem } from './interaction/HotspotSystem';
 import { InteractionManager } from './interaction/InteractionManager';
 import { buildPlaceholderScene } from './placeholder/PlaceholderDesk';
 import { AssetLoader } from './core/AssetLoader';
+import { BookRenderer } from './content/BookRenderer';
 import { withBase } from '../lib/url';
-import type { HotspotId } from '../lib/hotspots';
+import { HOTSPOTS, type HotspotId } from '../lib/hotspots';
 import type { QualityTier } from '../scripts/desk/storage';
 
 export type AppState =
@@ -49,6 +50,7 @@ export class DeskScene {
   private interaction!: InteractionManager;
   private state: AppState = 'loading';
   private resizeObserver: ResizeObserver | null = null;
+  private bookRenderer: BookRenderer | null = null;
   /** desk.glb 后台加载完成（占位路径下立即 resolved） */
   private deskReady: Promise<void> = Promise.resolve();
 
@@ -96,6 +98,13 @@ export class DeskScene {
     void this.deskReady.then(() => {
       this.hotspots.build();
       this.lighting.snapTo({});
+      // 书页渲染器：把文章排版到笔记本书页上（就地阅读）
+      this.bookRenderer = new BookRenderer(this.manager, this.registry);
+      this.bookRenderer.onRequestExit = () => void this.unfocus();
+      this.interaction.onBookClick = (rc) => this.bookRenderer?.handleClick(rc) ?? false;
+      this.interaction.onBookHover = (rc) => this.bookRenderer?.hitTest(rc) ?? false;
+      this.interaction.onBookMiss = () => void this.unfocus();
+      void this.bookRenderer.mount();
       this.manager.invalidate();
     });
 
@@ -214,6 +223,10 @@ export class DeskScene {
     const anchor = this.hotspots.anchorWorld(id);
     if (!def || !anchor) return;
 
+    const inScene = HOTSPOTS[id].behavior === 'in-scene';
+    // 就地阅读：飞行期间并行加载书页内容（目录）
+    if (inScene) void this.bookRenderer?.prepare();
+
     this.state = 'focusing';
     this.interaction.mode = 'disabled';
     this.rig.disableInput();
@@ -225,6 +238,12 @@ export class DeskScene {
 
     await this.rig.flyTo(resolveFocusPose(def, anchor), 0.8);
     this.state = 'focused';
+    if (inScene) {
+      // 就地阅读：点击交给书页，不发 focusComplete（HTML 层不加背景虚化、不开面板）
+      this.interaction.mode = 'book';
+      this.bookRenderer?.setFocused(true);
+      return;
+    }
     const rect =
       this.hotspots.anchorRect(id) ?? new DOMRectReadOnly(0, 0, 0, 0);
     this.bus.emit('camera:focusComplete', { id, anchorRect: rect });
@@ -233,6 +252,8 @@ export class DeskScene {
   async unfocus(): Promise<void> {
     if (this.state !== 'focused' && this.state !== 'focusing') return;
     this.state = 'unfocusing';
+    this.interaction.mode = 'disabled';
+    this.bookRenderer?.setFocused(false);
     this.hotspots.setDrawerOpen(false, () => this.audio.drawer());
 
     await this.rig.flyTo(HOME_POSE, 0.7);
@@ -241,6 +262,11 @@ export class DeskScene {
     this.rig.enableInput(true);
     this.clock.quietTicks = false;
     this.bus.emit('camera:unfocusComplete');
+  }
+
+  /** 书页渲染器（desk.glb 未就绪或占位场景时为 null） */
+  get book(): BookRenderer | null {
+    return this.bookRenderer;
   }
 
   project(id: HotspotId): { x: number; y: number } | null {
@@ -292,6 +318,7 @@ export class DeskScene {
 
   dispose(): void {
     this.resizeObserver?.disconnect();
+    this.bookRenderer?.dispose();
     this.interaction?.dispose();
     this.manager?.dispose();
     this.bus.clear();

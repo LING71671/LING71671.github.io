@@ -1,7 +1,7 @@
 ---
 import { Image } from 'astro:assets';
 import { SITE, SOCIALS } from '../../config/site';
-import avatar from '../../assets/avatar.svg';
+import avatar from '../../assets/avatar.jpg';
 ---
 
 <section class="about">
@@ -35,17 +35,17 @@ import avatar from '../../assets/avatar.svg';
         <span>{SITE.location}</span>
       </li>
     </ul>
-    <a class="contact-btn" href={`mailto:${SITE.email}`}>联系我</a>
+    <a class="contact-btn" href="https://github.com/LING71671" target="_blank" rel="noopener">GitHub 上找我</a>
   </div>
   <div class="prose about-body">
     <p>
-      你好，我是{SITE.name}。这里是我的数字书桌——一个用来写作、思考与记录的私人空间。
+      你好，我是{SITE.name}。平时的工作是把别人的程序拆开看：读反编译出来的代码，写自动化分析的工具，整理逆向工程的知识库。这个网站是工作之外做的一件小东西。
     </p>
     <p>
-      我相信好的设计是安静的：它不打扰，却始终在场。这个网站本身就是这句话的一次实验——3D
-      场景负责氛围与导航，而每一篇文字都以最朴素的 HTML 呈现，可以被检索、被链接、被慢慢阅读。
+      一个写代码的人做一张 3D 书桌，理由其实很简单：想知道浏览器里的三维场景到底能不能既好看又能用。所以这里的分工很清楚，Three.js 只负责氛围和导航，每一篇文字都是最朴素的
+      HTML，可以被检索、被链接、被慢慢读。
     </p>
-    <p>如果你对设计、开发或者任何一篇笔记有想说的，欢迎写信给我。</p>
+    <p>笔记里写的多是具体的活：source map 考古、并发提交的坑、MCP 工具链的取舍。如果哪一篇对你有用，或者你发现我写错了，欢迎在 GitHub 上找我。</p>
   </div>
 </section>
 
