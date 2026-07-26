@@ -8,7 +8,10 @@
     "build": "astro build",
     "preview": "astro preview",
     "check": "astro check",
-    "test": "vitest run"
+    "test": "vitest run",
+    "models": "pwsh scripts/export-glb.ps1",
+    "parity": "node scripts/check-parity.mjs",
+    "og": "node scripts/gen-og.mjs"
   },
   "dependencies": {
     "@astrojs/rss": "^4.0.19",
