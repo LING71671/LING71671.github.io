@@ -11,6 +11,7 @@ import { InteractionManager } from './interaction/InteractionManager';
 import { buildPlaceholderScene } from './placeholder/PlaceholderDesk';
 import { AssetLoader } from './core/AssetLoader';
 import { BookRenderer } from './content/BookRenderer';
+import { ScreenOS } from './content/ScreenOS';
 import { withBase } from '../lib/url';
 import { HOTSPOTS, type HotspotId } from '../lib/hotspots';
 import type { QualityTier } from '../scripts/desk/storage';
@@ -51,6 +52,9 @@ export class DeskScene {
   private state: AppState = 'loading';
   private resizeObserver: ResizeObserver | null = null;
   private bookRenderer: BookRenderer | null = null;
+  private screenOS: ScreenOS | null = null;
+  /** 当前就地阅读聚焦的热点（notebook 书页 / monitor 屏幕系统） */
+  private inSceneId: HotspotId | null = null;
   /** desk.glb 后台加载完成（占位路径下立即 resolved） */
   private deskReady: Promise<void> = Promise.resolve();
 
@@ -101,10 +105,24 @@ export class DeskScene {
       // 书页渲染器：把文章排版到笔记本书页上（就地阅读）
       this.bookRenderer = new BookRenderer(this.manager, this.registry);
       this.bookRenderer.onRequestExit = () => void this.unfocus();
-      this.interaction.onBookClick = (rc) => this.bookRenderer?.handleClick(rc) ?? false;
-      this.interaction.onBookHover = (rc) => this.bookRenderer?.hitTest(rc) ?? false;
+      // 就地聚焦的点击分发：显示器聚焦时画布点击都视为「屏幕外」（DOM 屏幕自行消费自己的事件）
+      this.interaction.onBookClick = (rc) => {
+        if (this.inSceneId === 'monitor') return false;
+        return this.bookRenderer?.handleClick(rc) ?? false;
+      };
+      this.interaction.onBookHover = (rc) => {
+        if (this.inSceneId === 'monitor') return false;
+        return this.bookRenderer?.hitTest(rc) ?? false;
+      };
       this.interaction.onBookMiss = () => void this.unfocus();
       void this.bookRenderer.mount();
+      // 屏幕系统：把可操作的桌面 OS 贴进显示器（失败时静默保留贴图屏幕）
+      this.screenOS = new ScreenOS(this.manager, this.registry);
+      this.screenOS.onRequestExit = () => void this.unfocus();
+      this.screenOS.mount();
+      if (this.state === 'idle' || this.state === 'focusing' || this.state === 'focused') {
+        this.screenOS.setRevealed(true);
+      }
       this.manager.invalidate();
     });
 
@@ -119,6 +137,7 @@ export class DeskScene {
       this.clock.setToRealTime();
       this.interaction.mode = 'scene';
       this.rig.enableInput(true);
+      this.screenOS?.setRevealed(true);
       this.bus.emit('scene:ready');
       this.bus.emit('entry:complete');
       return;
@@ -196,6 +215,8 @@ export class DeskScene {
     void this.lighting.transitionTo({ phase: 'scene', dayBlend, lamp }, 4.5);
     void this.clock.sweepToRealTime(2.2);
     this.clock.setTickGlow(0);
+    // 相机后退时显示器随房间一起「亮起」
+    this.screenOS?.setRevealed(true);
     await this.rig.flyTo(HOME_POSE, 8);
 
     this.state = 'idle';
@@ -224,8 +245,9 @@ export class DeskScene {
     if (!def || !anchor) return;
 
     const inScene = HOTSPOTS[id].behavior === 'in-scene';
-    // 就地阅读：飞行期间并行加载书页内容（目录）
-    if (inScene) void this.bookRenderer?.prepare();
+    // 就地阅读：飞行期间并行加载内容（书页目录 / 屏幕系统 partial 预取）
+    if (inScene && id === 'notebook') void this.bookRenderer?.prepare();
+    if (inScene && id === 'monitor') this.screenOS?.prepare();
 
     this.state = 'focusing';
     this.interaction.mode = 'disabled';
@@ -239,9 +261,11 @@ export class DeskScene {
     await this.rig.flyTo(resolveFocusPose(def, anchor), 0.8);
     this.state = 'focused';
     if (inScene) {
-      // 就地阅读：点击交给书页，不发 focusComplete（HTML 层不加背景虚化、不开面板）
+      // 就地阅读：点击交给书页 / 屏幕，不发 focusComplete（HTML 层不加背景虚化、不开面板）
+      this.inSceneId = id;
       this.interaction.mode = 'book';
-      this.bookRenderer?.setFocused(true);
+      if (id === 'notebook') this.bookRenderer?.setFocused(true);
+      else if (id === 'monitor') this.screenOS?.setFocused(true);
       return;
     }
     const rect =
@@ -253,7 +277,9 @@ export class DeskScene {
     if (this.state !== 'focused' && this.state !== 'focusing') return;
     this.state = 'unfocusing';
     this.interaction.mode = 'disabled';
+    this.inSceneId = null;
     this.bookRenderer?.setFocused(false);
+    this.screenOS?.setFocused(false);
     this.hotspots.setDrawerOpen(false, () => this.audio.drawer());
 
     await this.rig.flyTo(HOME_POSE, 0.7);
@@ -318,6 +344,7 @@ export class DeskScene {
 
   dispose(): void {
     this.resizeObserver?.disconnect();
+    this.screenOS?.dispose();
     this.bookRenderer?.dispose();
     this.interaction?.dispose();
     this.manager?.dispose();

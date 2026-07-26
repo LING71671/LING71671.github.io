@@ -69,6 +69,8 @@ const latest = publishedPosts(await getCollection('posts')).slice(0, 3);
   {/* —— 3D 书桌 —— */}
   <div id="desk-root">
     <canvas id="desk-canvas"></canvas>
+    {/* CSS3D 屏幕系统层（ScreenOS 把 DOM 桌面贴进 3D 显示器；未聚焦时不拦截指针） */}
+    <div id="screen-os-layer" aria-hidden="true"></div>
     <div id="vignette" aria-hidden="true"></div>
 
     <div id="hud" aria-hidden="true">
@@ -246,6 +248,30 @@ const latest = publishedPosts(await getCollection('posts')).slice(0, 3);
   }
 
   #desk-canvas.blurred {
+    filter: blur(9px) brightness(0.88);
+    transform: scale(1.02);
+  }
+
+  /* —— CSS3D 屏幕系统层：canvas 之上、HUD 之下 —— */
+  #screen-os-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    pointer-events: none;
+    overflow: hidden;
+    opacity: 0;
+    transition:
+      opacity 1.6s ease,
+      filter 0.4s var(--ease-out),
+      transform 0.4s var(--ease-out);
+  }
+
+  #screen-os-layer.on {
+    opacity: 1;
+  }
+
+  /* HTML 面板打开时与 canvas 同步虚化，避免屏幕独自清晰 */
+  #desk-canvas.blurred ~ #screen-os-layer {
     filter: blur(9px) brightness(0.88);
     transform: scale(1.02);
   }

@@ -49,8 +49,9 @@ export const HOTSPOTS: Record<HotspotId, HotspotDef> = {
   monitor: {
     id: 'monitor',
     label: '显示器',
-    hint: '项目与作品',
-    behavior: 'content',
+    hint: '桌面系统 · 屏幕内浏览',
+    // 屏幕内操作：内容渲染在 3D 显示器的屏幕里（ScreenOS）；/projects/ 完整页面与深链仍然可用
+    behavior: 'in-scene',
     partial: '/partials/projects/',
     href: '/projects/',
   },

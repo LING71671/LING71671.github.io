@@ -1,13 +1,21 @@
 ---
 import { NOTES } from '../../config/site';
 import { withBase } from '../../lib/url';
+
+/* NOTES 是 as const 元组，href 为 null 的条目会把联合窄化成 never，
+   先展平成普通结构再渲染 */
+const notes = NOTES.map((note) => ({
+  label: note.label as string,
+  href: (note.href ?? null) as string | null,
+  external: note.external as boolean,
+}));
 ---
 
 <section class="sticky-notes">
   <h1 class="hand">便签</h1>
   <ul>
     {
-      NOTES.map((note) => (
+      notes.map((note) => (
         <li class="note hand">
           {note.href ? (
             <a

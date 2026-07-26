@@ -983,7 +983,7 @@ def build_sticky(M):
     root = add_empty("sticky_root", P(x, DESK_TOP_Y, z))
     objs = []
     pads = import_asset("office_notepads", "decor_notepads",
-                        (x, DESK_TOP_Y, z), rot_z=0.35, target_width=0.085,
+                        (x, DESK_TOP_Y, z), rot_z=0.35, target_width=0.13,
                         max_parts=2)
     if pads:
         objs.append(pads)

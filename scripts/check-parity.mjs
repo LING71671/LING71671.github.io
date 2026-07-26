@@ -3,11 +3,20 @@
  * （两者由同一组件渲染，此测试防止未来改版时产生内容漂移）。
  * 用法: node scripts/check-parity.mjs  （需先 astro build）
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+
+// 文章对：取 dist 里实际存在的前两篇，避免内容改名后脚本失效
+const postSlugs = readdirSync('dist/posts', { withFileTypes: true })
+  .filter((e) => e.isDirectory())
+  .map((e) => e.name)
+  .sort()
+  .slice(0, 2);
 
 const pairs = [
-  ['dist/posts/writing-habit/index.html', 'dist/partials/posts/writing-habit/index.html'],
-  ['dist/posts/quiet-afternoon-design-reasons/index.html', 'dist/partials/posts/quiet-afternoon-design-reasons/index.html'],
+  ...postSlugs.map((slug) => [
+    `dist/posts/${slug}/index.html`,
+    `dist/partials/posts/${slug}/index.html`,
+  ]),
   ['dist/about/index.html', 'dist/partials/about/index.html'],
   ['dist/archive/index.html', 'dist/partials/archive/index.html'],
 ];

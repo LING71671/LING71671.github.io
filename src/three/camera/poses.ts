@@ -50,10 +50,12 @@ export const FOCUS_POSES: Partial<Record<HotspotId, FocusPoseDef>> = {
     fov: 36,
   },
   monitor: {
+    // 屏幕内操作位姿：正对 monitor_screen 平面中心（锚点是 monitor_root 包围盒中心，
+    // 屏幕中心相对它约 +0.06y / +0.019z），屏幕高约占画面八成，ScreenOS 的 DOM 文字清晰可读。
     anchor: NODES.monitorRoot,
-    offset: new THREE.Vector3(0, 0.05, 0.58),
-    targetOffset: new THREE.Vector3(0, 0.03, 0),
-    fov: 36,
+    offset: new THREE.Vector3(0, 0.06, 0.68),
+    targetOffset: new THREE.Vector3(0, 0.06, 0.019),
+    fov: 32,
   },
   calendar: {
     anchor: NODES.calendarRoot,
@@ -68,16 +70,18 @@ export const FOCUS_POSES: Partial<Record<HotspotId, FocusPoseDef>> = {
     fov: 36,
   },
   drawer: {
+    // 抽屉拉出后从斜上方俯看进托盘内部（正面看只能看到面板，看不见里面的东西）
     anchor: NODES.drawerRoot,
-    offset: new THREE.Vector3(0, 0.52, 0.46),
-    targetOffset: new THREE.Vector3(0, -0.04, 0.16),
-    fov: 40,
+    offset: new THREE.Vector3(0, 0.46, 0.52),
+    targetOffset: new THREE.Vector3(0, -0.05, 0.2),
+    fov: 42,
   },
   sticky: {
+    // 便签本很小，聚焦要留出桌面上下文，否则只剩两块色块
     anchor: NODES.stickyRoot,
-    offset: new THREE.Vector3(0, 0.34, 0.15),
+    offset: new THREE.Vector3(-0.02, 0.34, 0.26),
     targetOffset: new THREE.Vector3(0, 0, 0),
-    fov: 36,
+    fov: 38,
   },
 };
 
