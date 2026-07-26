@@ -37,6 +37,8 @@ export const NODES = {
   stickyRoot: 'sticky_root',
   windowRoot: 'window_root',
   windowGlass: 'window_glass',
+  /** 窗外实景照片板（不受室内光照影响，按原图呈现） */
+  windowView: 'decor_window_view',
 
   // —— 可选锚点（空节点；缺省用对应 root 包围盒中心） ——
   coffeeSteamAnchor: 'coffee_steam_anchor',

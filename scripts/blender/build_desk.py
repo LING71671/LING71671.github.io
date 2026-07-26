@@ -625,9 +625,12 @@ def build_room(M):
                    P(wx, wy - wh / 2 - 0.015, WINDOW["z"] + 0.03), M["wood_dark"],
                    bevel=0.005)
 
-    # —— 窗外实景：真实照片贴在窗后的大板上（自发光，不受室内光照影响） ——
-    view = add_plane("decor_window_view", ww * 2.6, wh * 2.0,
-                     P(wx, wy + 0.15, WALL_Z - 1.2), M["window_view"])
+    # —— 窗外实景：真实照片板 ——
+    # 距离要近：放太远的话窗口只框到照片中间一小块（看起来就是一片天空）。
+    # 放在墙后 0.42m，尺寸按 3:2 取，窗口正好框住照片中段的景物。
+    # 板心比窗心低一截：照片的山峰与霞光在上半部，压低板子才能把它们框进窗内
+    view = add_plane("decor_window_view", 1.90, 1.27,
+                     P(wx, wy - 0.30, WALL_Z - 0.42), M["window_view"])
 
     # —— 窗台盆栽：真实 CC0 模型（Poly Haven potted_plant_01） ——
     plant_objs = []
@@ -665,8 +668,9 @@ def build_desk(M):
     # 前梁：为抽屉留出真实开口（左右两段 + 抽屉上方过梁），否则抽屉面板与梁穿模
     apron_y = DESK["top"] - DESK["thickness"] - 0.08
     apron_z = dz + DESK["d"] / 2 - 0.02
-    opening_w = DRAWER["face_w"] + 0.02
-    opening_h = DRAWER["face_h"] + 0.02
+    # 开口要比面板小一圈（面板盖住开口边缘），否则关上时四周漏出内腔的浅色
+    opening_w = DRAWER["face_w"] - 0.008
+    opening_h = DRAWER["face_h"] - 0.008
     apron_left_x = -(DESK["w"] - 0.18) / 2
     apron_right_x = (DESK["w"] - 0.18) / 2
     open_left = DRAWER["x"] - opening_w / 2
@@ -710,8 +714,9 @@ def build_desk(M):
                      dz + DESK["d"] / 2 - 0.011), M["wood_desk"], bevel=0.004)
 
     # 抽屉本体：真实空腔（底板 + 三面薄壁；前壁即抽屉面板）
-    bw = DRAWER["face_w"] - 0.02          # 内箱宽
-    bh = DRAWER["face_h"] + 0.02          # 内箱高（比面板略深，容得下东西）
+    # 内箱要能穿过开口，所以比开口再小一圈；高度绝不能超过面板，否则从正面看得见
+    bw = DRAWER["face_w"] - 0.020         # 内箱宽
+    bh = DRAWER["face_h"] - 0.016         # 内箱高
     bd = DRAWER["depth"] - 0.06           # 内箱深（缩短，比例更像书桌中屉）
     cy = DESK["top"] - DESK["thickness"] - 0.08          # 抽屉中心高
     cz_ = dz + DESK["d"] / 2 - 0.02 - bd / 2             # 内箱中心 three-Z

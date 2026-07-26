@@ -5,6 +5,8 @@ import sitemap from '@astrojs/sitemap';
 // 站点 URL（与 src/config/site.ts 的 SITE.url 保持一致），换域名时两处同改
 export default defineConfig({
   site: 'https://ling71671.github.io',
+  // 开发工具条会浮在 3D 场景上，遮挡画面且与站点无关
+  devToolbar: { enabled: false },
   integrations: [
     sitemap({
       // partial 片段路由不进 sitemap

@@ -58,6 +58,17 @@ export class AssetLoader {
         material.emissiveMap = texture;
         material.emissiveIntensity = 0.5;
         material.needsUpdate = true;
+      } else if (name === NODES.windowView) {
+        // 窗外实景：改成不受光照的基础材质。作为自发光材质时
+        // 基色光照 + 自发光会叠成过曝，白天窗口糊成一片白。
+        const basic = new THREE.MeshBasicMaterial({
+          map: material.map ?? material.emissiveMap,
+          toneMapped: true,
+        });
+        obj.material = basic;
+        obj.castShadow = false;
+        obj.receiveShadow = false;
+        material.dispose();
       } else if (name === NODES.calendarFace) {
         // 台历正面：GitHub 提交记录热力格（运行时绘制）
         mountCalendarFace(obj, invalidate);

@@ -37,6 +37,12 @@ export class LightingSystem {
   private lampSpot: THREE.SpotLight;
   private clockFill: THREE.PointLight;
   private sky: SkyWindow;
+  /** 窗外实景照片（模型提供时存在）；昼夜通过给它调色体现 */
+  private windowView: THREE.Mesh | null = null;
+  /** desk.glb 是在光照系统建好之后才异步到位的，节点要惰性解析 */
+  private windowViewResolved = false;
+  private static readonly VIEW_DAY = new THREE.Color(0xffffff);
+  private static readonly VIEW_NIGHT = new THREE.Color(0x27334d);
 
   private current: LightingValues;
   private state: LightingState = { phase: 'entry', dayBlend: 1, lamp: 'ambient' };
@@ -193,6 +199,27 @@ export class LightingSystem {
     this.manager.renderer.toneMappingExposure = v.exposure;
     this.manager.scene.environmentIntensity = v.envI;
     this.sky.setBlend(v.skyBlend);
+
+    // 窗外照片按昼夜调色：白天原色，夜里压成冷蓝的暗景。
+    // 模型带了实景照片就隐藏渐变天空板，否则它会挡在照片前面。
+    if (!this.windowViewResolved) {
+      const node = this.registry.get(NODES.windowView);
+      if (node instanceof THREE.Mesh) {
+        this.windowView = node;
+        this.sky.mesh.visible = false;
+        this.windowViewResolved = true;
+      }
+    }
+    if (this.windowView) {
+      const mat = this.windowView.material as THREE.MeshBasicMaterial;
+      if (mat.color) {
+        mat.color.lerpColors(
+          LightingSystem.VIEW_NIGHT,
+          LightingSystem.VIEW_DAY,
+          v.skyBlend,
+        );
+      }
+    }
 
     const bulb = this.registry.get(NODES.lampBulb);
     if (bulb instanceof THREE.Mesh) {

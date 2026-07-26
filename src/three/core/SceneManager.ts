@@ -7,6 +7,11 @@ import type { QualityTier } from '../../scripts/desk/storage';
  * 一切视觉变更必须经 invalidate() 请求帧；空闲时零渲染。
  * 持续性动画（阻尼、补间）通过 updaters 注册，返回 true 表示仍活跃。
  */
+/**
+ * 每帧回调。返回值只表示「是否继续存活」，**不代表需要重绘**。
+ * 需要出帧必须显式调用 invalidate()，否则像秒针这种长期存活、
+ * 每秒才变一次的 updater 会把按需渲染变成 60fps 常驻渲染。
+ */
 export type Updater = (dt: number) => boolean;
 
 export class SceneManager {
@@ -94,13 +99,11 @@ export class SceneManager {
       const dt = Math.min((now - this.lastFrameTime) / 1000, 0.1);
       this.lastFrameTime = now;
 
-      let active = false;
       for (const updater of [...this.updaters]) {
-        if (updater(dt)) active = true;
-        else this.updaters.delete(updater);
+        if (!updater(dt)) this.updaters.delete(updater);
       }
-      if (this.tweens.update(dt)) active = true;
-      if (active) this.needsRender = true;
+      // 补间是短时的，且并非每个 onUpdate 都会自行 invalidate，统一按帧出图
+      if (this.tweens.update(dt)) this.needsRender = true;
 
       if (this.needsRender && !this.renderPaused) {
         this.needsRender = false;
