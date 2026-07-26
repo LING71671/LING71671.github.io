@@ -1,0 +1,67 @@
+---
+import { SITE, SOCIALS } from '../config/site';
+import { withBase } from '../lib/url';
+
+const year = new Date().getFullYear();
+---
+
+<footer class="site-footer focus-dim">
+  <div class="container inner">
+    <p class="motto hand">{SITE.motto}</p>
+    <ul class="socials">
+      {
+        SOCIALS.map((s) =>
+          'href' in s && s.href ? (
+            <li>
+              <a href={s.href} target={s.href.startsWith('http') ? '_blank' : undefined} rel="noopener">
+                {s.label} · {s.value}
+              </a>
+            </li>
+          ) : (
+            <li>
+              {s.label} · {s.value}
+            </li>
+          ),
+        )
+      }
+      <li><a href={withBase('/rss.xml')}>RSS 订阅</a></li>
+    </ul>
+    <p class="copyright">© {year} {SITE.name} · {SITE.location}</p>
+  </div>
+</footer>
+
+<style>
+  .site-footer {
+    margin-top: var(--space-8);
+    border-top: 1px solid var(--line-soft);
+    padding-block: var(--space-6);
+    color: var(--ink-faint);
+    font-size: var(--text-sm);
+  }
+
+  .inner {
+    display: grid;
+    gap: var(--space-3);
+  }
+
+  .motto {
+    color: var(--ink-soft);
+    font-size: var(--text-base);
+  }
+
+  .socials {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-5);
+  }
+
+  .socials a {
+    color: var(--ink-faint);
+  }
+
+  .socials a:hover {
+    color: var(--brass);
+  }
+</style>

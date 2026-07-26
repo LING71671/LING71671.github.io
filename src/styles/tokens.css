@@ -1,0 +1,95 @@
+/* ============================================================
+   设计 Token —— 来自设计稿的「温暖·专注·私密」视觉基调
+   昼：奶油纸张 + 深墨 + 黄铜金；夜：琥珀暖光 + 低亮度
+   所有组件只引用变量，昼夜切换由 <html data-theme> 驱动
+   ============================================================ */
+
+:root {
+  color-scheme: light;
+
+  /* —— 颜色：昼（奶油纸张） —— */
+  --paper: #f5efe0;
+  --paper-raised: #fbf6ea;
+  --paper-sunken: #ece3cd;
+  --ink: #2b2117;
+  --ink-soft: #5a4c3a;
+  --ink-faint: #8a7a62;
+  --brass: #a8853c;
+  --brass-bright: #c9a45c;
+  --wood: #6b4a2b;
+  --line: #d9ccae;
+  --line-soft: #e6dcc2;
+  --shadow: 0 2px 12px rgb(74 58 36 / 0.08);
+  --shadow-lift: 0 8px 28px rgb(74 58 36 / 0.16);
+  --scrim: rgb(43 33 23 / 0.35);
+
+  /* —— 字体 —— */
+  --font-serif: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', SimSun, serif;
+  --font-kai: 'LXGW WenKai Screen', 'LXGW WenKai', 'Kaiti SC', KaiTi, cursive;
+  --font-mono: ui-monospace, 'Cascadia Code', Consolas, 'Courier New', monospace;
+
+  /* —— 字号阶梯 —— */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+  --text-3xl: 2.125rem;
+
+  /* —— 间距 —— */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+
+  /* —— 圆角 / 动效（设计稿约束 180–320ms） —— */
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 16px;
+  --dur-fast: 180ms;
+  --dur: 240ms;
+  --dur-slow: 320ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* —— 版心 —— */
+  --content-width: 44rem;
+  --wide-width: 64rem;
+}
+
+/* —— 夜：琥珀暖光、低亮度、护眼 —— */
+[data-theme='night'] {
+  color-scheme: dark;
+  --paper: #1d1610;
+  --paper-raised: #292016;
+  --paper-sunken: #15100b;
+  --ink: #e9dcc2;
+  --ink-soft: #b3a184;
+  --ink-faint: #7d6d52;
+  --brass: #d8a24a;
+  --brass-bright: #e6b968;
+  --wood: #8a6238;
+  --line: #3d3222;
+  --line-soft: #322917;
+  --shadow: 0 2px 16px rgb(0 0 0 / 0.4);
+  --shadow-lift: 0 8px 32px rgb(0 0 0 / 0.55);
+  --scrim: rgb(0 0 0 / 0.5);
+}
+
+/* —— 专注模式：弱化页面外围元素（内容页生效） —— */
+[data-focus='1'] .focus-dim {
+  opacity: 0.35;
+  transition: opacity var(--dur-slow) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 1ms;
+    --dur: 1ms;
+    --dur-slow: 1ms;
+  }
+}

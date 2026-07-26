@@ -1,0 +1,115 @@
+/* 长文阅读排版（Markdown 渲染结果的容器） */
+
+.prose {
+  font-size: var(--text-lg);
+  line-height: 2;
+  color: var(--ink);
+  overflow-wrap: break-word;
+}
+
+.prose > * + * {
+  margin-top: 1.25em;
+}
+
+.prose h2,
+.prose h3,
+.prose h4 {
+  font-weight: 700;
+  line-height: 1.5;
+  margin-top: 2em;
+  letter-spacing: 0.02em;
+}
+
+.prose h2 {
+  font-size: var(--text-xl);
+  padding-bottom: 0.4em;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.prose h3 {
+  font-size: var(--text-lg);
+}
+
+.prose blockquote {
+  border-left: 3px solid var(--brass);
+  padding: 0.25em 0 0.25em 1.25em;
+  color: var(--ink-soft);
+  font-family: var(--font-kai);
+}
+
+.prose code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--paper-sunken);
+  border-radius: var(--radius-sm);
+  padding: 0.15em 0.4em;
+}
+
+.prose pre {
+  background: var(--paper-sunken) !important;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  padding: var(--space-4) var(--space-5);
+  overflow-x: auto;
+  line-height: 1.7;
+  font-size: var(--text-sm);
+}
+
+.prose pre code {
+  background: none;
+  padding: 0;
+  font-size: inherit;
+}
+
+/* Shiki 双主题切换 */
+[data-theme='night'] .prose .astro-code,
+[data-theme='night'] .prose .astro-code span {
+  color: var(--shiki-dark) !important;
+  background-color: transparent !important;
+}
+
+.prose img {
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  margin-inline: auto;
+}
+
+.prose hr {
+  border: none;
+  text-align: center;
+  margin-block: 2.5em;
+}
+
+.prose hr::after {
+  content: '· · ·';
+  color: var(--ink-faint);
+  letter-spacing: 1em;
+}
+
+.prose ul,
+.prose ol {
+  padding-left: 1.5em;
+}
+
+.prose li + li {
+  margin-top: 0.4em;
+}
+
+.prose table {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.prose th,
+.prose td {
+  border: 1px solid var(--line);
+  padding: 0.5em 1em;
+  text-align: left;
+}
+
+.prose th {
+  background: var(--paper-sunken);
+}

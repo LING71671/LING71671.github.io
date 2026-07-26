@@ -1,0 +1,47 @@
+---
+import { withBase } from '../lib/url';
+
+export interface Crumb {
+  label: string;
+  href?: string;
+}
+
+interface Props {
+  items: Crumb[];
+}
+
+const { items } = Astro.props;
+---
+
+<nav class="breadcrumb" aria-label="面包屑">
+  {
+    items.map((item, i) => (
+      <>
+        {i > 0 && <span class="sep" aria-hidden="true">/</span>}
+        {item.href ? <a href={withBase(item.href)}>{item.label}</a> : <span>{item.label}</span>}
+      </>
+    ))
+  }
+</nav>
+
+<style>
+  .breadcrumb {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--ink-faint);
+  }
+
+  .breadcrumb a {
+    color: var(--ink-faint);
+  }
+
+  .breadcrumb a:hover {
+    color: var(--brass);
+  }
+
+  .sep {
+    color: var(--line);
+  }
+</style>

@@ -1,0 +1,9 @@
+---
+import ContentLayout from '../../layouts/ContentLayout.astro';
+import AboutView from '../../components/views/AboutView.astro';
+import { SITE } from '../../config/site';
+---
+
+<ContentLayout title="关于我" description={`${SITE.name} —— ${SITE.roles.join(' / ')}。${SITE.bio}`}>
+  <AboutView />
+</ContentLayout>

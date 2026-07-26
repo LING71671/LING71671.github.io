@@ -1,0 +1,15 @@
+---
+import { getCollection } from 'astro:content';
+import PostCard from '../PostCard.astro';
+import { publishedPosts } from '../../lib/archive';
+
+const posts = publishedPosts(await getCollection('posts'));
+---
+
+<section class="post-list">
+  <div class="page-head">
+    <h1>笔记</h1>
+    <p class="lede">在安静的环境里写下的思考、设计与记录。</p>
+  </div>
+  {posts.map((post) => <PostCard post={post} />)}
+</section>

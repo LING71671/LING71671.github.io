@@ -1,0 +1,51 @@
+---
+import { getCollection } from 'astro:content';
+import type { CollectionEntry } from 'astro:content';
+import ContentLayout from '../../layouts/ContentLayout.astro';
+import PostCard from '../../components/PostCard.astro';
+import { publishedPosts, groupByTag } from '../../lib/archive';
+import { CATEGORIES } from '../../content.config';
+
+export async function getStaticPaths() {
+  const posts = publishedPosts(await getCollection('posts'));
+  const map = new Map<string, CollectionEntry<'posts'>[]>();
+
+  for (const g of groupByTag(posts)) {
+    map.set(g.tag, [...g.posts]);
+  }
+  // 分类同时注册为标签页（面包屑第三级的落点），与同名标签合并去重
+  for (const cat of CATEGORIES) {
+    const inCat = posts.filter((p) => p.data.category === cat);
+    if (inCat.length === 0 && !map.has(cat)) continue;
+    const existing = map.get(cat) ?? [];
+    const merged = [...existing];
+    for (const p of inCat) {
+      if (!merged.some((m) => m.id === p.id)) merged.push(p);
+    }
+    merged.sort((a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf());
+    map.set(cat, merged);
+  }
+
+  return [...map.entries()].map(([tag, tagPosts]) => ({
+    params: { tag },
+    props: { tag, posts: tagPosts },
+  }));
+}
+
+interface Props {
+  tag: string;
+  posts: CollectionEntry<'posts'>[];
+}
+
+const { tag, posts } = Astro.props;
+---
+
+<ContentLayout title={`#${tag}`} description={`标签「${tag}」下的全部文章。`}>
+  <section>
+    <div class="page-head">
+      <h1>#{tag}</h1>
+      <p class="lede">共 {posts.length} 篇笔记</p>
+    </div>
+    {posts.map((post) => <PostCard post={post} />)}
+  </section>
+</ContentLayout>

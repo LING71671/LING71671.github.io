@@ -1,0 +1,128 @@
+---
+import { Image } from 'astro:assets';
+import { SITE, SOCIALS } from '../../config/site';
+import avatar from '../../assets/avatar.svg';
+---
+
+<section class="about">
+  <div class="page-head">
+    <h1>关于我</h1>
+  </div>
+  <div class="profile card">
+    <Image src={avatar} alt={`${SITE.name}的头像`} width={96} height={96} class="avatar" />
+    <div class="who">
+      <h2>{SITE.name}</h2>
+      <p class="roles">{SITE.roles.join(' / ')}</p>
+      <p class="bio">{SITE.bio}</p>
+    </div>
+    <ul class="contacts">
+      {
+        SOCIALS.map((s) => (
+          <li>
+            <span class="k">{s.label}</span>
+            {'href' in s && s.href ? (
+              <a href={s.href} target={s.href.startsWith('http') ? '_blank' : undefined} rel="noopener">
+                {s.value}
+              </a>
+            ) : (
+              <span>{s.value}</span>
+            )}
+          </li>
+        ))
+      }
+      <li>
+        <span class="k">城市</span>
+        <span>{SITE.location}</span>
+      </li>
+    </ul>
+    <a class="contact-btn" href={`mailto:${SITE.email}`}>联系我</a>
+  </div>
+  <div class="prose about-body">
+    <p>
+      你好，我是{SITE.name}。这里是我的数字书桌——一个用来写作、思考与记录的私人空间。
+    </p>
+    <p>
+      我相信好的设计是安静的：它不打扰，却始终在场。这个网站本身就是这句话的一次实验——3D
+      场景负责氛围与导航，而每一篇文字都以最朴素的 HTML 呈现，可以被检索、被链接、被慢慢阅读。
+    </p>
+    <p>如果你对设计、开发或者任何一篇笔记有想说的，欢迎写信给我。</p>
+  </div>
+</section>
+
+<style>
+  .profile {
+    padding: var(--space-6);
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: var(--space-5);
+    align-items: start;
+  }
+
+  :global(.about .avatar) {
+    border-radius: 50%;
+    border: 2px solid var(--brass);
+  }
+
+  .who h2 {
+    font-size: var(--text-2xl);
+    font-weight: 700;
+  }
+
+  .roles {
+    color: var(--brass);
+    font-size: var(--text-sm);
+    margin-top: var(--space-1);
+  }
+
+  .bio {
+    color: var(--ink-soft);
+    margin-top: var(--space-2);
+  }
+
+  .contacts {
+    grid-column: 1 / -1;
+    list-style: none;
+    padding: var(--space-4) 0 0;
+    border-top: 1px solid var(--line-soft);
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .contacts li {
+    display: flex;
+    gap: var(--space-4);
+  }
+
+  .contacts .k {
+    flex-shrink: 0;
+    width: 4em;
+    color: var(--ink-faint);
+    font-size: var(--text-sm);
+  }
+
+  .contact-btn {
+    grid-column: 1 / -1;
+    justify-self: start;
+    background: var(--brass);
+    color: var(--paper);
+    border-radius: var(--radius-sm);
+    padding: 0.5em 2em;
+    font-size: var(--text-sm);
+  }
+
+  .contact-btn:hover {
+    background: var(--brass-bright);
+    color: var(--paper);
+    text-decoration: none;
+  }
+
+  .about-body {
+    margin-top: var(--space-6);
+  }
+
+  @media (max-width: 560px) {
+    .profile {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

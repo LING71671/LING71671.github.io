@@ -1,0 +1,183 @@
+---
+import { getCollection } from 'astro:content';
+import FilterTabs from '../FilterTabs.astro';
+import { publishedPosts, groupByMonth, groupByYear, groupByTag } from '../../lib/archive';
+import { withBase, fmtShortDate, cnMonth } from '../../lib/url';
+import { postHref } from '../../lib/hotspots';
+
+const posts = publishedPosts(await getCollection('posts'));
+const months = groupByMonth(posts);
+const years = groupByYear(posts);
+const tags = groupByTag(posts);
+
+const tabs = [
+  { key: 'month', label: '按月归档' },
+  { key: 'year', label: '按年归档' },
+  { key: 'tag', label: '标签归档' },
+] as const;
+
+/** 按月视图中先按年分节 */
+const monthsByYear = years.map((yg) => ({
+  year: yg.year,
+  count: yg.posts.length,
+  months: months.filter((m) => m.year === yg.year),
+}));
+---
+
+<section class="archive">
+  <div class="page-head">
+    <h1>归档</h1>
+    <p class="lede">按年 / 月归档文章，查看时间线与历史更新。</p>
+  </div>
+  <FilterTabs tabs={tabs} active="month" mode="panel" scope="archive" />
+
+  <div data-tabs-panels="archive">
+    <div data-tab-panel="month">
+      {
+        monthsByYear.map((yg) => (
+          <section class="year-block">
+            <h2>
+              {yg.year}年 <span class="count">{yg.count} 篇笔记</span>
+            </h2>
+            {yg.months.map((mg) => (
+              <div class="month-block">
+                <h3>
+                  {cnMonth(mg.month)} <span class="count">{mg.posts.length}</span>
+                </h3>
+                <ul>
+                  {mg.posts.map((p) => (
+                    <li>
+                      <time datetime={p.data.pubDate.toISOString()}>
+                        {fmtShortDate(p.data.pubDate)}
+                      </time>
+                      <a href={withBase(postHref(p.id))}>{p.data.title}</a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </section>
+        ))
+      }
+    </div>
+
+    <div data-tab-panel="year" hidden>
+      {
+        years.map((yg) => (
+          <section class="year-block">
+            <h2>
+              {yg.year}年 <span class="count">{yg.posts.length} 篇笔记</span>
+            </h2>
+            <ul>
+              {yg.posts.map((p) => (
+                <li>
+                  <time datetime={p.data.pubDate.toISOString()}>
+                    {fmtShortDate(p.data.pubDate)}
+                  </time>
+                  <a href={withBase(postHref(p.id))}>{p.data.title}</a>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))
+      }
+    </div>
+
+    <div data-tab-panel="tag" hidden>
+      <ul class="tag-cloud">
+        {
+          tags.map((tg) => (
+            <li>
+              <a href={withBase(`/tags/${tg.tag}/`)}>
+                #{tg.tag} <span class="count">{tg.posts.length}</span>
+              </a>
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+  </div>
+</section>
+
+<style>
+  [data-tabs-panels] {
+    margin-top: var(--space-5);
+  }
+
+  .year-block + .year-block {
+    margin-top: var(--space-6);
+  }
+
+  .year-block h2 {
+    font-size: var(--text-xl);
+    font-weight: 700;
+    padding-bottom: var(--space-2);
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  .count {
+    font-size: var(--text-sm);
+    font-weight: 400;
+    color: var(--ink-faint);
+  }
+
+  .month-block {
+    margin-top: var(--space-4);
+  }
+
+  .month-block h3 {
+    font-size: var(--text-base);
+    font-weight: 700;
+    color: var(--brass);
+  }
+
+  ul {
+    list-style: none;
+    padding: 0;
+    margin-top: var(--space-2);
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  li {
+    display: flex;
+    gap: var(--space-4);
+    align-items: baseline;
+  }
+
+  li time {
+    flex-shrink: 0;
+    color: var(--ink-faint);
+    font-size: var(--text-sm);
+    font-variant-numeric: tabular-nums;
+  }
+
+  li a {
+    color: var(--ink);
+  }
+
+  li a:hover {
+    color: var(--brass);
+  }
+
+  .tag-cloud {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
+
+  .tag-cloud a {
+    display: inline-block;
+    color: var(--ink-soft);
+    background: var(--paper-sunken);
+    border: 1px solid var(--line-soft);
+    border-radius: 999px;
+    padding: 0.3em 1em;
+  }
+
+  .tag-cloud a:hover {
+    color: var(--brass);
+    border-color: var(--brass);
+    text-decoration: none;
+  }
+</style>

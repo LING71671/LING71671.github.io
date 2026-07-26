@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /partials/
+
+Sitemap: https://sanye.design/sitemap-index.xml

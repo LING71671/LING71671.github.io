@@ -1,0 +1,61 @@
+---
+/**
+ * 通用 tab 条。两种用法（由 behaviors.ts 事件委托驱动，partial 注入后依然可用）：
+ * - mode="filter"：按钮携带 data-filter-btn，过滤同容器内 [data-cat] 元素
+ * - mode="panel"：按钮携带 data-tab，切换同容器内 [data-tab-panel] 面板
+ */
+interface Props {
+  tabs: readonly { key: string; label: string }[];
+  active: string;
+  mode: 'filter' | 'panel';
+  /** 作用域容器 id（data-tabs-scope） */
+  scope: string;
+}
+
+const { tabs, active, mode, scope } = Astro.props;
+---
+
+<div class="filter-tabs" role="tablist" data-tabs-scope={scope}>
+  {
+    tabs.map((tab) => (
+      <button
+        type="button"
+        role="tab"
+        aria-selected={tab.key === active ? 'true' : 'false'}
+        data-filter-btn={mode === 'filter' ? tab.key : undefined}
+        data-tab={mode === 'panel' ? tab.key : undefined}
+      >
+        {tab.label}
+      </button>
+    ))
+  }
+</div>
+
+<style>
+  .filter-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    border-bottom: 1px solid var(--line-soft);
+    padding-bottom: var(--space-3);
+  }
+
+  button {
+    font-size: var(--text-sm);
+    color: var(--ink-soft);
+    padding: 0.3em 1em;
+    border-radius: 999px;
+    transition:
+      color var(--dur-fast) var(--ease-out),
+      background-color var(--dur-fast) var(--ease-out);
+  }
+
+  button:hover {
+    color: var(--brass);
+  }
+
+  button[aria-selected='true'] {
+    color: var(--paper);
+    background: var(--brass);
+  }
+</style>

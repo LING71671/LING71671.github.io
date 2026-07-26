@@ -1,0 +1,15 @@
+---
+/**
+ * partial 片段的元信息（JSON data 块，不会被执行）。
+ * 覆盖面板注入片段后读取它来修正 document.title 等。
+ */
+interface Props {
+  title: string;
+  /** pushState 的规范深链 URL；popover 类无 */
+  url?: string | undefined;
+}
+
+const meta = Astro.props;
+---
+
+<script type="application/json" data-panel-meta set:html={JSON.stringify(meta)} />

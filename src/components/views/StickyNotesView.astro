@@ -1,0 +1,71 @@
+---
+import { NOTES } from '../../config/site';
+import { withBase } from '../../lib/url';
+---
+
+<section class="sticky-notes">
+  <h1 class="hand">便签</h1>
+  <ul>
+    {
+      NOTES.map((note) => (
+        <li class="note hand">
+          {note.href ? (
+            <a
+              href={note.external ? note.href : withBase(note.href)}
+              target={note.external ? '_blank' : undefined}
+              rel={note.external ? 'noopener' : undefined}
+            >
+              {note.label}
+              {note.external && <span aria-hidden="true"> ↗</span>}
+            </a>
+          ) : (
+            <span class="todo">☐ {note.label}</span>
+          )}
+        </li>
+      ))
+    }
+  </ul>
+</section>
+
+<style>
+  .sticky-notes h1 {
+    font-size: var(--text-lg);
+    color: var(--brass);
+    margin-bottom: var(--space-3);
+  }
+
+  ul {
+    list-style: none;
+    padding: 0;
+    display: grid;
+    gap: var(--space-3);
+  }
+
+  .note {
+    background: var(--paper-raised);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow);
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-base);
+    transform: rotate(-0.4deg);
+  }
+
+  .note:nth-child(even) {
+    transform: rotate(0.5deg);
+  }
+
+  .note a {
+    color: var(--ink);
+    display: block;
+  }
+
+  .note a:hover {
+    color: var(--brass);
+    text-decoration: none;
+  }
+
+  .todo {
+    color: var(--ink-soft);
+  }
+</style>

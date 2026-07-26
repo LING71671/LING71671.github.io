@@ -1,0 +1,27 @@
+---
+import '@fontsource/noto-serif-sc/400.css';
+import '@fontsource/noto-serif-sc/500.css';
+import '@fontsource/noto-serif-sc/700.css';
+import 'lxgw-wenkai-screen-webfont/style.css';
+import '../styles/tokens.css';
+import '../styles/base.css';
+import '../styles/prose.css';
+
+import BaseHead from '../components/BaseHead.astro';
+import ThemeScript from '../components/ThemeScript.astro';
+import type { Props as HeadProps } from '../components/BaseHead.astro';
+
+export interface Props extends HeadProps {}
+---
+
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <ThemeScript />
+    <BaseHead {...Astro.props} />
+    <slot name="head" />
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>

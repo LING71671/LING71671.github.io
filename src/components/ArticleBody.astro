@@ -1,0 +1,134 @@
+---
+/**
+ * 文章正文块：完整页（/posts/[slug]）与面板 partial（/partials/posts/[slug]）
+ * 共用同一组件，从源码层面保证两种呈现的内容一致。
+ * 宽屏时相关文章呈右侧栏（容器查询，面板窄容器内自动堆叠）。
+ */
+import { render } from 'astro:content';
+import type { CollectionEntry } from 'astro:content';
+import Breadcrumb from './Breadcrumb.astro';
+import PostMeta from './PostMeta.astro';
+import TagList from './TagList.astro';
+import RelatedPosts from './RelatedPosts.astro';
+import { relatedPosts } from '../lib/related';
+import { countWords } from '../lib/words';
+
+interface Props {
+  post: CollectionEntry<'posts'>;
+  /** 已发布、按时间倒序 */
+  allPosts: CollectionEntry<'posts'>[];
+}
+
+const { post, allPosts } = Astro.props;
+const { Content } = await render(post);
+// 构建期从原文统计中文字数（中文约 400 字/分钟）
+const words = countWords(post.body ?? '');
+const readingMinutes = Math.max(1, Math.round(words / 400));
+
+const related = relatedPosts(post, allPosts, 3);
+const idx = allPosts.findIndex((p) => p.id === post.id);
+const next = idx >= 0 ? allPosts[idx + 1] : undefined;
+---
+
+<article class="article">
+  <div class="main">
+    <Breadcrumb
+      items={[
+        { label: '首页', href: '/' },
+        { label: '笔记', href: '/posts/' },
+        { label: post.data.category, href: `/tags/${post.data.category}/` },
+      ]}
+    />
+    <header class="article-head">
+      <h1>{post.data.title}</h1>
+      <PostMeta
+        pubDate={post.data.pubDate}
+        updatedDate={post.data.updatedDate}
+        words={words}
+        readingMinutes={readingMinutes}
+      />
+    </header>
+    <div class="prose">
+      <Content />
+    </div>
+    <footer class="article-foot">
+      <TagList tags={post.data.tags} />
+      <div class="actions">
+        <button type="button" data-share data-share-title={post.data.title}>
+          分享此文
+        </button>
+      </div>
+    </footer>
+  </div>
+  <div class="side">
+    <RelatedPosts posts={related} next={next} />
+  </div>
+</article>
+
+<style>
+  .article {
+    container-type: inline-size;
+    container-name: article;
+    display: grid;
+    gap: var(--space-6);
+    padding-block: var(--space-6);
+  }
+
+  .article-head {
+    margin-top: var(--space-4);
+  }
+
+  .article-head h1 {
+    font-size: var(--text-3xl);
+    font-weight: 700;
+    line-height: 1.4;
+    letter-spacing: 0.02em;
+  }
+
+  .article-head :global(.post-meta) {
+    margin-top: var(--space-3);
+  }
+
+  .prose {
+    margin-top: var(--space-5);
+  }
+
+  .article-foot {
+    margin-top: var(--space-6);
+    padding-top: var(--space-5);
+    border-top: 1px solid var(--line-soft);
+    display: grid;
+    gap: var(--space-4);
+  }
+
+  .actions {
+    display: flex;
+    gap: var(--space-3);
+  }
+
+  .actions button {
+    font-size: var(--text-sm);
+    color: var(--brass);
+    border: 1px solid var(--brass);
+    border-radius: 999px;
+    padding: 0.35em 1.2em;
+    transition:
+      color var(--dur-fast) var(--ease-out),
+      background-color var(--dur-fast) var(--ease-out);
+  }
+
+  .actions button:hover {
+    background: var(--brass);
+    color: var(--paper);
+  }
+
+  @container article (min-width: 56rem) {
+    .article {
+      grid-template-columns: minmax(0, 1fr) 16rem;
+    }
+
+    .side {
+      padding-top: var(--space-7);
+    }
+  }
+</style>

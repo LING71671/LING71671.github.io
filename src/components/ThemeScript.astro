@@ -1,0 +1,96 @@
+{/* 主题内联脚本：置于 <head> 最前，先于首绘设置 data-theme 防闪烁。
+    暴露 window.deskTheme —— HTML 与 3D 场景唯一的主题耦合点。
+    台灯三档映射：ambient=昼 / focus=昼+专注 / night=夜 */}
+<script is:inline>
+  (() => {
+    const KEY_THEME = 'desk.v1.theme';
+    const KEY_FOCUS = 'desk.v1.focusMode';
+    const root = document.documentElement;
+    const read = (k) => {
+      try {
+        return localStorage.getItem(k);
+      } catch {
+        return null;
+      }
+    };
+    const write = (k, v) => {
+      try {
+        localStorage.setItem(k, v);
+      } catch {}
+    };
+    const autoTheme = () => {
+      const h = new Date().getHours();
+      return h >= 6 && h < 18 ? 'day' : 'night';
+    };
+    const readMode = () => {
+      const m = read(KEY_THEME);
+      return m === 'day' || m === 'night' || m === 'auto' ? m : 'auto';
+    };
+
+    let mode = readMode();
+    let focus = read(KEY_FOCUS) === '1';
+    const resolved = () => (mode === 'auto' ? autoTheme() : mode);
+
+    const apply = () => {
+      root.dataset.theme = resolved();
+      if (focus) root.dataset.focus = '1';
+      else delete root.dataset.focus;
+    };
+    const emit = () => {
+      window.dispatchEvent(
+        new CustomEvent('desk:theme', {
+          detail: { theme: resolved(), mode, focus },
+        }),
+      );
+    };
+    apply();
+
+    window.deskTheme = {
+      get: () => ({ mode, theme: resolved(), focus }),
+      set(next) {
+        if (next !== 'day' && next !== 'night' && next !== 'auto') return;
+        mode = next;
+        write(KEY_THEME, mode);
+        apply();
+        emit();
+      },
+      toggle() {
+        this.set(resolved() === 'day' ? 'night' : 'day');
+      },
+      setFocus(on) {
+        focus = !!on;
+        write(KEY_FOCUS, focus ? '1' : '0');
+        apply();
+        emit();
+      },
+      setLamp(lamp) {
+        if (lamp === 'ambient') {
+          focus = false;
+          write(KEY_FOCUS, '0');
+          this.set('day');
+        } else if (lamp === 'focus') {
+          focus = true;
+          write(KEY_FOCUS, '1');
+          this.set('day');
+        } else if (lamp === 'night') {
+          focus = false;
+          write(KEY_FOCUS, '0');
+          this.set('night');
+        }
+      },
+      getLamp() {
+        if (resolved() === 'night') return 'night';
+        return focus ? 'focus' : 'ambient';
+      },
+    };
+
+    // 多标签页同步
+    window.addEventListener('storage', (e) => {
+      if (e.key !== KEY_THEME && e.key !== KEY_FOCUS) return;
+      mode = readMode();
+      focus = read(KEY_FOCUS) === '1';
+      apply();
+      emit();
+    });
+  })();
+</script>

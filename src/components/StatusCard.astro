@@ -1,0 +1,68 @@
+---
+import { fmtDate } from '../lib/url';
+
+interface Props {
+  date: Date;
+  mood?: string | undefined;
+  latest?: boolean;
+  /** 「今日已写 N 字」，仅最新一条展示 */
+  wordsToday?: number | undefined;
+}
+
+const { date, mood, latest = false, wordsToday } = Astro.props;
+---
+
+<article class:list={['status-card', 'card', { latest }]}>
+  {latest && <p class="label hand">最近在想…</p>}
+  <div class="content hand">
+    <slot />
+  </div>
+  <footer>
+    <time datetime={date.toISOString()}>{fmtDate(date)}</time>
+    {mood && <span class="mood">{mood}</span>}
+    {
+      latest && typeof wordsToday === 'number' && wordsToday > 0 && (
+        <span class="words">今日已写 {wordsToday} 字 ✎</span>
+      )
+    }
+  </footer>
+</article>
+
+<style>
+  .status-card {
+    padding: var(--space-5);
+  }
+
+  .status-card.latest {
+    border-color: var(--brass);
+  }
+
+  .label {
+    color: var(--brass);
+    font-size: var(--text-sm);
+    margin-bottom: var(--space-2);
+  }
+
+  .content {
+    font-size: var(--text-lg);
+    line-height: 1.9;
+  }
+
+  .content :global(p + p) {
+    margin-top: 0.5em;
+  }
+
+  footer {
+    margin-top: var(--space-3);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-4);
+    color: var(--ink-faint);
+    font-size: var(--text-sm);
+  }
+
+  .words {
+    color: var(--brass);
+    margin-left: auto;
+  }
+</style>

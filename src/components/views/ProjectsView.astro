@@ -1,0 +1,35 @@
+---
+import { getCollection } from 'astro:content';
+import { CATEGORIES } from '../../content.config';
+import FilterTabs from '../FilterTabs.astro';
+import ProjectCard from '../ProjectCard.astro';
+
+const projects = (await getCollection('projects'))
+  .filter((p) => !p.data.draft)
+  .sort((a, b) => b.data.date.valueOf() - a.data.date.valueOf());
+
+const tabs = [
+  { key: 'all', label: '全部' },
+  ...CATEGORIES.map((c) => ({ key: c, label: c })),
+];
+---
+
+<section class="projects">
+  <div class="page-head">
+    <h1>项目与作品</h1>
+    <p class="lede">精选项目、作品集合与实验记录。</p>
+  </div>
+  <FilterTabs tabs={tabs} active="all" mode="filter" scope="projects" />
+  <div class="grid" data-filter-scope="projects">
+    {projects.map((project) => <ProjectCard project={project} />)}
+  </div>
+</section>
+
+<style>
+  .grid {
+    margin-top: var(--space-5);
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+    gap: var(--space-5);
+  }
+</style>

@@ -1,0 +1,60 @@
+---
+import { SITE } from '../config/site';
+import { fmtDate } from '../lib/url';
+
+interface Props {
+  pubDate: Date;
+  updatedDate?: Date | undefined;
+  words?: number;
+  readingMinutes?: number;
+}
+
+const { pubDate, updatedDate, words, readingMinutes } = Astro.props;
+---
+
+<p class="post-meta">
+  <span>{SITE.name}</span>
+  <span class="dot" aria-hidden="true">·</span>
+  <time datetime={pubDate.toISOString()}>{fmtDate(pubDate)}</time>
+  {
+    updatedDate && (
+      <>
+        <span class="dot" aria-hidden="true">·</span>
+        <span>编辑于 {fmtDate(updatedDate)}</span>
+      </>
+    )
+  }
+  {
+    typeof words === 'number' && words > 0 && (
+      <>
+        <span class="dot" aria-hidden="true">·</span>
+        <span>全文 {words} 字</span>
+      </>
+    )
+  }
+  {
+    typeof readingMinutes === 'number' && (
+      <>
+        <span class="dot" aria-hidden="true">·</span>
+        <span>约 {readingMinutes} 分钟</span>
+      </>
+    )
+  }
+  {/* 阅读量 / 赞：v1 省略，接入统计服务后填充此插槽 */}
+  <slot name="stats" />
+</p>
+
+<style>
+  .post-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--ink-faint);
+    font-size: var(--text-sm);
+  }
+
+  .dot {
+    color: var(--line);
+  }
+</style>

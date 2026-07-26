@@ -1,0 +1,24 @@
+---
+import BaseLayout from './BaseLayout.astro';
+import SiteHeader from '../components/SiteHeader.astro';
+import SiteFooter from '../components/SiteFooter.astro';
+import type { Props as HeadProps } from '../components/BaseHead.astro';
+
+export interface Props extends HeadProps {
+  /** true 用宽版心（项目网格等） */
+  wide?: boolean;
+}
+
+const { wide = false, ...head } = Astro.props;
+---
+
+<BaseLayout {...head}>
+  <SiteHeader />
+  <main id="main" class={wide ? 'container' : 'container-narrow'}>
+    <slot />
+  </main>
+  <SiteFooter />
+  <script>
+    import '../scripts/behaviors';
+  </script>
+</BaseLayout>

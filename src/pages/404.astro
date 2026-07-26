@@ -1,0 +1,37 @@
+---
+import ContentLayout from '../layouts/ContentLayout.astro';
+import { withBase } from '../lib/url';
+---
+
+<ContentLayout title="页面不存在" description="404 - 页面不存在">
+  <section class="lost">
+    <p class="code hand">404</p>
+    <h1>这一页不在书桌上</h1>
+    <p class="hint">它可能被收进了抽屉，也可能从未写下。</p>
+    <p><a href={withBase('/')}>回到书桌</a> · <a href={withBase('/posts/')}>看看笔记</a></p>
+  </section>
+</ContentLayout>
+
+<style>
+  .lost {
+    text-align: center;
+    padding-block: var(--space-8);
+  }
+
+  .code {
+    font-size: 5rem;
+    color: var(--brass);
+    line-height: 1;
+  }
+
+  h1 {
+    margin-top: var(--space-4);
+    font-size: var(--text-2xl);
+  }
+
+  .hint {
+    color: var(--ink-soft);
+    margin-top: var(--space-2);
+    margin-bottom: var(--space-5);
+  }
+</style>

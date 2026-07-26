@@ -1,0 +1,33 @@
+---
+import { getCollection } from 'astro:content';
+import type { CollectionEntry } from 'astro:content';
+import ContentLayout from '../../layouts/ContentLayout.astro';
+import ArticleBody from '../../components/ArticleBody.astro';
+import Comments from '../../components/Comments.astro';
+import { publishedPosts } from '../../lib/archive';
+
+export async function getStaticPaths() {
+  const posts = publishedPosts(await getCollection('posts'));
+  return posts.map((post) => ({ params: { slug: post.id }, props: { post } }));
+}
+
+interface Props {
+  post: CollectionEntry<'posts'>;
+}
+
+const { post } = Astro.props;
+const allPosts = publishedPosts(await getCollection('posts'));
+---
+
+<ContentLayout
+  title={post.data.title}
+  description={post.data.description}
+  type="article"
+  publishedTime={post.data.pubDate}
+  updatedTime={post.data.updatedDate}
+  ogImage={post.data.cover?.src}
+  wide
+>
+  <ArticleBody post={post} allPosts={allPosts} />
+  <Comments />
+</ContentLayout>

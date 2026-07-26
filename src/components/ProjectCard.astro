@@ -1,0 +1,80 @@
+---
+import { Image } from 'astro:assets';
+import type { CollectionEntry } from 'astro:content';
+
+interface Props {
+  project: CollectionEntry<'projects'>;
+}
+
+const { project } = Astro.props;
+const { title, description, category, cover, coverAlt, link } = project.data;
+---
+
+<article class="project-card card" data-cat={category}>
+  <a class="cover-link" href={link ?? '#'} target={link ? '_blank' : undefined} rel="noopener">
+    <Image src={cover} alt={coverAlt ?? title} width={640} height={400} class="cover" />
+  </a>
+  <div class="body">
+    <div class="row">
+      <h2>{title}</h2>
+      <span class="chip">{category}</span>
+    </div>
+    <p class="desc">{description}</p>
+  </div>
+</article>
+
+<style>
+  .project-card {
+    overflow: hidden;
+    transition:
+      transform var(--dur) var(--ease-out),
+      box-shadow var(--dur) var(--ease-out);
+  }
+
+  .project-card:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-lift);
+  }
+
+  .project-card[hidden] {
+    display: none;
+  }
+
+  .cover-link {
+    display: block;
+  }
+
+  :global(.project-card .cover) {
+    width: 100%;
+    aspect-ratio: 8 / 5;
+    object-fit: cover;
+  }
+
+  .body {
+    padding: var(--space-4);
+  }
+
+  .row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+
+  h2 {
+    font-size: var(--text-base);
+    font-weight: 700;
+  }
+
+  .chip {
+    flex-shrink: 0;
+    font-size: var(--text-xs);
+    color: var(--brass);
+  }
+
+  .desc {
+    margin-top: var(--space-1);
+    color: var(--ink-soft);
+    font-size: var(--text-sm);
+  }
+</style>

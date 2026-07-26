@@ -1,0 +1,48 @@
+---
+import { getCollection, render } from 'astro:content';
+import StatusCard from '../StatusCard.astro';
+import { publishedPosts } from '../../lib/archive';
+import { wordsWrittenOn } from '../../lib/words';
+
+const entries = (await getCollection('status')).sort(
+  (a, b) => b.data.date.valueOf() - a.data.date.valueOf(),
+);
+const rendered = await Promise.all(entries.map((e) => render(e)));
+
+const posts = publishedPosts(await getCollection('posts'));
+const latest = entries[0];
+const wordsToday = latest
+  ? wordsWrittenOn(latest.data.date, posts, entries)
+  : 0;
+---
+
+<section class="status">
+  <div class="page-head">
+    <h1>最近状态</h1>
+    <p class="lede">碎碎念、灵感与快速记录。</p>
+  </div>
+  <div class="timeline">
+    {
+      entries.map((entry, i) => {
+        const Content = rendered[i]!.Content;
+        return (
+          <StatusCard
+            date={entry.data.date}
+            mood={entry.data.mood}
+            latest={i === 0}
+            wordsToday={i === 0 ? wordsToday : undefined}
+          >
+            <Content />
+          </StatusCard>
+        );
+      })
+    }
+  </div>
+</section>
+
+<style>
+  .timeline {
+    display: grid;
+    gap: var(--space-4);
+  }
+</style>

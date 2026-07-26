@@ -1,0 +1,9 @@
+---
+/**
+ * 评论区占位：COMMENTS.provider 为 'none' 时不渲染。
+ * 后续接入 giscus 时在此填充（client 侧懒加载），版式零改动。
+ */
+import { COMMENTS } from '../config/site';
+---
+
+{COMMENTS.provider === 'giscus' && <section class="comments" data-comments />}
