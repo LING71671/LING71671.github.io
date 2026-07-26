@@ -21,6 +21,7 @@
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.9",
+    "@gltf-transform/cli": "^4.4.2",
     "@types/three": "^0.185.1",
     "typescript": "^6.0.3",
     "vitest": "^4.1.10"

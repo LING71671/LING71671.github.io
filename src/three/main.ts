@@ -9,6 +9,8 @@ import { ClockController } from './interaction/ClockController';
 import { HotspotSystem } from './interaction/HotspotSystem';
 import { InteractionManager } from './interaction/InteractionManager';
 import { buildPlaceholderScene } from './placeholder/PlaceholderDesk';
+import { AssetLoader } from './core/AssetLoader';
+import { withBase } from '../lib/url';
 import type { HotspotId } from '../lib/hotspots';
 import type { QualityTier } from '../scripts/desk/storage';
 
@@ -47,6 +49,8 @@ export class DeskScene {
   private interaction!: InteractionManager;
   private state: AppState = 'loading';
   private resizeObserver: ResizeObserver | null = null;
+  /** desk.glb 后台加载完成（占位路径下立即 resolved） */
+  private deskReady: Promise<void> = Promise.resolve();
 
   async init(canvas: HTMLCanvasElement, opts: InitOptions = {}): Promise<void> {
     // canvas 尺寸就绪后再初始化（Astro 水合时机与布局竞态防护）
@@ -56,9 +60,7 @@ export class DeskScene {
     this.manager.onContextLost = () => this.bus.emit('contextlost');
     this.manager.setQuality(opts.quality ?? 'high');
 
-    const { root } = buildPlaceholderScene();
-    this.manager.scene.add(root);
-    this.registry.resolve(this.manager.scene);
+    await this.composeScene();
 
     this.rig = new CameraRig(this.manager);
     this.lighting = new LightingSystem(this.manager, this.registry);
@@ -90,10 +92,18 @@ export class DeskScene {
     this.manager.resize();
     this.manager.start();
 
+    // desk.glb 到位后重建热点命中盒并重放光照（灯泡/屏幕强度落到新材质）
+    void this.deskReady.then(() => {
+      this.hotspots.build();
+      this.lighting.snapTo({});
+      this.manager.invalidate();
+    });
+
     const dayBlend = LightingSystem.initialDayBlend();
     const lamp = opts.lamp ?? 'ambient';
 
     if (opts.skipEntry) {
+      await this.deskReady;
       this.state = 'idle';
       this.rig.snapTo(HOME_POSE);
       this.lighting.snapTo({ phase: 'scene', dayBlend, lamp });
@@ -114,6 +124,42 @@ export class DeskScene {
     this.bus.emit('scene:ready');
   }
 
+  /**
+   * 场景来源：优先 GLTF（Blender 产物），失败回落占位几何体。
+   * dev 下 ?placeholder=1 强制占位（对比调试）。
+   */
+  private async composeScene(): Promise<void> {
+    const params = new URLSearchParams(location.search);
+    const forcePlaceholder = import.meta.env.DEV && params.has('placeholder');
+    const loader = new AssetLoader();
+
+    if (!forcePlaceholder) {
+      const clockScene = await loader.load(withBase('/models/clock.glb'));
+      if (clockScene) {
+        AssetLoader.prepare(clockScene);
+        AssetLoader.ensureHandPivots(clockScene);
+        AssetLoader.ensureClockHitProxy(clockScene);
+        this.manager.scene.add(clockScene);
+        this.registry.resolve(this.manager.scene);
+        this.bus.emit('assets:progress', { loaded: 1, total: 2 });
+        // 书桌在入口时钟交互期间后台并载；加载被仪式感吸收
+        this.deskReady = loader.load(withBase('/models/desk.glb')).then((deskScene) => {
+          if (deskScene) {
+            AssetLoader.prepare(deskScene);
+            this.manager.scene.add(deskScene);
+            this.registry.resolve(this.manager.scene);
+          }
+          this.bus.emit('assets:progress', { loaded: 2, total: 2 });
+        });
+        return;
+      }
+    }
+
+    const { root } = buildPlaceholderScene();
+    this.manager.scene.add(root);
+    this.registry.resolve(this.manager.scene);
+  }
+
   private waitForSize(canvas: HTMLCanvasElement): Promise<void> {
     if (canvas.clientWidth > 0 && canvas.clientHeight > 0) return Promise.resolve();
     return new Promise((resolve) => {
@@ -132,8 +178,10 @@ export class DeskScene {
     this.state = 'transition';
     this.interaction.mode = 'disabled';
 
-    // 秒针已启动、短句显示中；停一拍让仪式感落地
+    // 秒针已启动、短句显示中；停一拍让仪式感落地。
+    // 若 desk.glb 未就绪则自然停驻在「时间继续了。」画面等待。
     await sleep(1.6);
+    await this.deskReady;
 
     // 房间苏醒：光照渐变 + 指针扫向真实时间，同时相机开始后退
     void this.lighting.transitionTo({ phase: 'scene', dayBlend, lamp }, 4.5);

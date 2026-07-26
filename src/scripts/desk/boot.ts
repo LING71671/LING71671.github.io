@@ -216,7 +216,8 @@ async function run(): Promise<void> {
         activateHotspot: (id) => void router.openHotspot(id as never),
         completeClock: () => api.debugCompleteClock(),
       },
-    };
+      api,
+    } as typeof window.__desk;
   }
 }
 

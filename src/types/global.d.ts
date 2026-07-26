@@ -29,6 +29,7 @@ declare global {
         activateHotspot?: (id: string) => void;
         completeClock?: () => void;
       };
+      api?: unknown;
     };
   }
 }
