@@ -12,4 +12,4 @@ interface Props {
 const meta = Astro.props;
 ---
 
-<script type="application/json" data-panel-meta set:html={JSON.stringify(meta)} />
+<script is:inline type="application/json" data-panel-meta set:html={JSON.stringify(meta)} />

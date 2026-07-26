@@ -1,0 +1,452 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { getCollection } from 'astro:content';
+import { SITE, NAV } from '../config/site';
+import { withBase } from '../lib/url';
+import { publishedPosts } from '../lib/archive';
+import { postHref } from '../lib/hotspots';
+import { fmtDate } from '../lib/url';
+
+/*
+ * 以下导入不直接渲染 —— 仅为把 partial 用到的组件样式带进首页 CSS 图，
+ * 保证覆盖面板注入的片段（携带相同 scoped class）有样式可用。
+ */
+import '../components/ArticleBody.astro';
+import '../components/views/PostListView.astro';
+import '../components/views/ProjectsView.astro';
+import '../components/views/ArchiveView.astro';
+import '../components/views/AboutView.astro';
+import '../components/views/StatusView.astro';
+import '../components/views/StickyNotesView.astro';
+
+const latest = publishedPosts(await getCollection('posts')).slice(0, 3);
+---
+
+<BaseLayout description={SITE.description}>
+  {/* WebGL 能力检测：先于首绘，成功则隐藏语义首页、显示 3D（自动降级，无用户开关） */}
+  <script is:inline slot="head">
+    (function () {
+      try {
+        var c = document.createElement('canvas');
+        var gl = c.getContext('webgl2') || c.getContext('webgl');
+        if (gl) document.documentElement.classList.add('webgl');
+      } catch (e) {
+        /* 保持降级 */
+      }
+    })();
+  </script>
+
+  {/* —— 语义首页：爬虫 / 无 JS / 无 WebGL 的入口 —— */}
+  <main id="fallback-home" class="container-narrow">
+    <header class="fb-head">
+      <h1>{SITE.title}</h1>
+      <p class="lede">{SITE.description}</p>
+      <noscript><p class="note">完整的 3D 书桌体验需要 JavaScript，以下为站点导航。</p></noscript>
+    </header>
+    <nav class="fb-nav" aria-label="站点导航">
+      {NAV.map((item) => <a href={withBase(item.href)}>{item.label}</a>)}
+    </nav>
+    <section class="fb-latest">
+      <h2>最近的笔记</h2>
+      <ul>
+        {
+          latest.map((post) => (
+            <li>
+              <a href={withBase(postHref(post.id))}>{post.data.title}</a>
+              <time datetime={post.data.pubDate.toISOString()}>
+                {fmtDate(post.data.pubDate)}
+              </time>
+            </li>
+          ))
+        }
+      </ul>
+    </section>
+    <footer class="fb-foot">
+      <p class="hand">{SITE.motto}</p>
+    </footer>
+  </main>
+
+  {/* —— 3D 书桌 —— */}
+  <div id="desk-root">
+    <canvas id="desk-canvas"></canvas>
+    <div id="vignette" aria-hidden="true"></div>
+
+    <div id="hud" aria-hidden="true">
+      <div id="hotspot-tip" hidden></div>
+      <div id="toast" hidden></div>
+      <div id="entry-ui">
+        <p id="entry-caption" class="hand">
+          房间的时间停住了。<br />请将时钟调到 <strong>7:20</strong>。
+        </p>
+        <p id="entry-feedback" class="hand" hidden></p>
+      </div>
+    </div>
+
+    <button id="mute-btn" type="button" aria-label="环境音开关" aria-pressed="false">♪</button>
+
+    <div id="overlay-backdrop" hidden></div>
+    <section
+      id="panel"
+      role="dialog"
+      aria-modal="true"
+      aria-label="内容面板"
+      tabindex="-1"
+      hidden
+    >
+      <header>
+        <span id="panel-title"></span>
+        <button id="panel-close" type="button" aria-label="关闭（ESC）">✕</button>
+      </header>
+      <div id="panel-scroll"></div>
+    </section>
+  </div>
+
+  <script>
+    import '../scripts/desk/boot';
+    import '../scripts/behaviors';
+  </script>
+</BaseLayout>
+
+<style is:global>
+  html.webgl body {
+    overflow: hidden;
+    height: 100dvh;
+  }
+
+  html.webgl #fallback-home {
+    display: none;
+  }
+
+  html:not(.webgl) #desk-root {
+    display: none;
+  }
+
+  /* hidden 属性必须赢过组件自身的 display 声明 */
+  #panel[hidden],
+  #overlay-backdrop[hidden],
+  #hotspot-tip[hidden],
+  #toast[hidden] {
+    display: none !important;
+  }
+
+  /* 覆盖面板骨架屏（innerHTML 注入，需全局选择器） */
+  .panel-skeleton {
+    padding: var(--space-6) 0;
+    display: grid;
+    gap: var(--space-4);
+  }
+
+  .panel-skeleton .sk {
+    height: 1em;
+    border-radius: var(--radius-sm);
+    background: var(--paper-sunken);
+    animation: sk-pulse 1.2s ease-in-out infinite;
+  }
+
+  .panel-skeleton .sk-title {
+    height: 2em;
+    width: 60%;
+  }
+
+  .panel-skeleton .sk-short {
+    width: 40%;
+  }
+
+  @keyframes sk-pulse {
+    50% {
+      opacity: 0.55;
+    }
+  }
+</style>
+
+<style>
+  /* —— 语义首页 —— */
+  #fallback-home {
+    padding-block: var(--space-8);
+  }
+
+  .fb-head h1 {
+    font-size: var(--text-3xl);
+    font-weight: 700;
+  }
+
+  .fb-head .lede {
+    margin-top: var(--space-3);
+    color: var(--ink-soft);
+  }
+
+  .note {
+    margin-top: var(--space-3);
+    color: var(--brass);
+    font-size: var(--text-sm);
+  }
+
+  .fb-nav {
+    margin-top: var(--space-5);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-4);
+  }
+
+  .fb-nav a {
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 0.35em 1.4em;
+    color: var(--ink-soft);
+  }
+
+  .fb-nav a:hover {
+    color: var(--brass);
+    border-color: var(--brass);
+    text-decoration: none;
+  }
+
+  .fb-latest {
+    margin-top: var(--space-7);
+  }
+
+  .fb-latest h2 {
+    font-size: var(--text-lg);
+    font-weight: 700;
+    color: var(--ink-soft);
+  }
+
+  .fb-latest ul {
+    list-style: none;
+    padding: 0;
+    margin-top: var(--space-4);
+    display: grid;
+    gap: var(--space-3);
+  }
+
+  .fb-latest time {
+    display: block;
+    color: var(--ink-faint);
+    font-size: var(--text-sm);
+  }
+
+  .fb-foot {
+    margin-top: var(--space-8);
+    color: var(--ink-faint);
+  }
+
+  /* —— 3D 场景层 —— */
+  #desk-root {
+    position: fixed;
+    inset: 0;
+  }
+
+  #desk-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    transition:
+      filter 0.4s var(--ease-out),
+      transform 0.4s var(--ease-out);
+  }
+
+  #desk-canvas.blurred {
+    filter: blur(9px) brightness(0.88);
+    transform: scale(1.02);
+  }
+
+  /* 入口暗角（校准成功后淡出） */
+  #vignette {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(
+      ellipse at 42% 46%,
+      transparent 18%,
+      rgb(8 5 2 / 0.62) 78%
+    );
+    transition: opacity 2.5s ease;
+  }
+
+  #vignette.fade-out {
+    opacity: 0;
+  }
+
+  /* —— HUD —— */
+  #hud {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  #hotspot-tip {
+    position: absolute;
+    background: var(--paper-raised);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow);
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--text-xs);
+    display: grid;
+    max-width: 12rem;
+  }
+
+  #hotspot-tip :global(strong) {
+    color: var(--brass);
+  }
+
+  #hotspot-tip :global(span) {
+    color: var(--ink-soft);
+  }
+
+  #toast {
+    position: absolute;
+    top: max(var(--space-5), env(safe-area-inset-top));
+    left: 50%;
+    translate: -50% 0;
+    background: var(--paper-raised);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    box-shadow: var(--shadow);
+    padding: var(--space-2) var(--space-5);
+    font-size: var(--text-sm);
+    color: var(--ink-soft);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+
+  #toast.show {
+    opacity: 1;
+  }
+
+  #entry-ui {
+    position: absolute;
+    left: 50%;
+    bottom: 14%;
+    translate: -50% 0;
+    text-align: center;
+    transition: opacity 0.6s ease;
+  }
+
+  #entry-ui.fade-out {
+    opacity: 0;
+  }
+
+  #entry-caption {
+    font-size: var(--text-xl);
+    color: #e9dcc2;
+    text-shadow: 0 2px 12px rgb(0 0 0 / 0.6);
+    line-height: 1.8;
+  }
+
+  #entry-caption :global(strong) {
+    color: var(--brass-bright);
+  }
+
+  #entry-feedback {
+    margin-top: var(--space-3);
+    font-size: var(--text-base);
+    color: var(--brass-bright);
+    text-shadow: 0 1px 8px rgb(0 0 0 / 0.6);
+  }
+
+  #mute-btn {
+    position: absolute;
+    right: max(var(--space-4), env(safe-area-inset-right));
+    bottom: max(var(--space-4), env(safe-area-inset-bottom));
+    z-index: 12;
+    width: 2.6rem;
+    height: 2.6rem;
+    border-radius: 50%;
+    border: 1px solid var(--line);
+    background: var(--paper-raised);
+    color: var(--brass);
+    font-size: var(--text-base);
+    box-shadow: var(--shadow);
+  }
+
+  #mute-btn.muted {
+    color: var(--ink-faint);
+    text-decoration: line-through;
+  }
+
+  /* —— 覆盖面板 —— */
+  #overlay-backdrop {
+    position: fixed;
+    inset: 0;
+    background: var(--scrim);
+    z-index: 20;
+  }
+
+  #panel {
+    position: fixed;
+    inset: 0;
+    margin: auto;
+    width: min(46rem, 92vw);
+    height: min(86dvh, 56rem);
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lift);
+    display: flex;
+    flex-direction: column;
+    z-index: 30;
+    outline: none;
+  }
+
+  #panel.popover {
+    width: min(24rem, 88vw);
+    height: auto;
+    max-height: 72dvh;
+  }
+
+  #panel > header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding: var(--space-4) var(--space-5);
+    border-bottom: 1px solid var(--line-soft);
+    flex-shrink: 0;
+  }
+
+  #panel-title {
+    font-weight: 700;
+    color: var(--ink-soft);
+    font-size: var(--text-sm);
+  }
+
+  #panel-close {
+    color: var(--ink-faint);
+    font-size: var(--text-lg);
+    line-height: 1;
+    padding: var(--space-2);
+    border-radius: var(--radius-sm);
+  }
+
+  #panel-close:hover {
+    color: var(--brass);
+    background: var(--paper-sunken);
+  }
+
+  #panel-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 var(--space-6) var(--space-6);
+  }
+
+  #panel.popover #panel-scroll {
+    padding: var(--space-4);
+  }
+
+  @media (max-width: 768px) {
+    #panel {
+      width: 100vw;
+      height: 100dvh;
+      border-radius: 0;
+      border: none;
+      padding-top: env(safe-area-inset-top);
+    }
+
+    #panel-scroll {
+      padding: 0 var(--space-4) var(--space-6);
+    }
+  }
+</style>
