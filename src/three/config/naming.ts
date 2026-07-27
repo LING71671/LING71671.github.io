@@ -19,6 +19,20 @@ export const NODES = {
   drawerRoot: 'drawer_root',
   /** 可动抽屉：原点在关闭位，局部 +Z 为拉出方向 */
   drawerSlide: 'drawer_slide',
+  // —— 抽屉里的私人物件（每件一个 empty 根，下挂若干零件；点击弹彩蛋卡片） ——
+  /** 旧拍立得 */
+  drawerItemPhoto: 'drawer_item_photo',
+  /** 手写便条 */
+  drawerItemNote: 'drawer_item_note',
+  /** 黄铜钥匙 */
+  drawerItemKey: 'drawer_item_key',
+  /** 精密螺丝刀 */
+  drawerItemDriver: 'drawer_item_driver',
+  /** U 盘 */
+  drawerItemUsb: 'drawer_item_usb',
+  /** 骰子 */
+  drawerItemDie: 'drawer_item_die',
+
   lampRoot: 'lamp_root',
   /** 灯头：原点在关节 */
   lampHead: 'lamp_head',

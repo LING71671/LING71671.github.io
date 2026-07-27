@@ -4,10 +4,20 @@
  * （时钟拖动天然提供首次交互）。
  */
 export class AudioManager {
+  /**
+   * 当前实例。给拿不到构造注入的模块用（如 BookRenderer 的翻页纸声）。
+   * 全站只会构造一个 AudioManager（DeskScene 持有）。
+   */
+  static current: AudioManager | null = null;
+
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
   private lastDetent = 0;
   muted = true;
+
+  constructor() {
+    AudioManager.current = this;
+  }
 
   /** 在 pointerdown 处理器内调用（iOS 要求真实手势栈） */
   unlock(): void {
@@ -77,5 +87,39 @@ export class AudioManager {
   /** 抽屉滑动（软噪声近似） */
   drawer(): void {
     this.blip(90, 0.16, 0.04, 'triangle');
+  }
+
+  /**
+   * 翻书页：一段极短的噪声，双峰包络（起手轻擦 + 落纸一声），
+   * 带通中心频率上扫模拟纸张滑过的「沙」声。静音时不响。
+   */
+  paper(): void {
+    if (this.muted || !this.ctx || !this.master) return;
+    if (this.ctx.state !== 'running') return;
+    const ctx = this.ctx;
+    const t0 = ctx.currentTime;
+    const dur = 0.28;
+    const len = Math.max(1, Math.floor(ctx.sampleRate * dur));
+    const buffer = ctx.createBuffer(1, len, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < len; i++) {
+      const p = i / len;
+      const rustle = Math.exp(-p * 11) * 0.75; // 起手掀起
+      const k = (p - 0.66) / 0.11;
+      const land = Math.exp(-(k * k)) * 0.55; // 落纸
+      data[i] = (Math.random() * 2 - 1) * (rustle + land);
+    }
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    const band = ctx.createBiquadFilter();
+    band.type = 'bandpass';
+    band.Q.value = 0.75;
+    band.frequency.setValueAtTime(1400, t0);
+    band.frequency.exponentialRampToValueAtTime(4600, t0 + dur);
+    const gain = ctx.createGain();
+    gain.gain.value = 0.055;
+    src.connect(band).connect(gain).connect(this.master);
+    src.start(t0);
+    src.stop(t0 + dur);
   }
 }

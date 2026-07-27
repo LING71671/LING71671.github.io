@@ -5,7 +5,7 @@ import { NODES } from '../config/naming';
 import { withBase } from '../../lib/url';
 import { postPartial } from '../../lib/hotspots';
 import { SITE } from '../../config/site';
-import { easeOutCubic } from '../utils/tween';
+import { AudioManager } from '../audio/AudioManager';
 
 /**
  * BookRenderer —— 把文章内容直接渲染到 3D 笔记本的书页上（就地阅读）。
@@ -17,6 +17,12 @@ import { easeOutCubic } from '../utils/tween';
  *   - 翻页由一片绕书脊（notebook 局部 Z 轴）旋转 180 度的「翻动页」完成，
  *     正面 / 背面分别贴旧页与新页纹理（背面纹理水平镜像，翻过来正好读正）。
  *
+ * 交互提示全部画在纸上（不用 HUD DOM）：
+ *   - 页脚一行极小字：上一页 / 下一页 / 目录 / 合上，以及页码进度；
+ *   - 外下角一个极淡的「翘角」，悬停时加深并转黄铜色 —— 告诉你这一角可以翻；
+ *   - 目录条目悬停时底纹微亮、序号转黄铜。
+ * 悬停重绘只在「命中目标发生变化」时做一次，绝不每帧重绘（按需渲染不能破坏）。
+ *
  * 内容来自 partial 片段路由：/partials/posts/（目录）与 /partials/posts/<slug>/（单篇）。
  * 目录跨（spread 0）左页是笔记本扉页，右页为文章清单，点击条目进入该文章。
  */
@@ -27,17 +33,30 @@ const W = 1024;
 const H = 1480;
 const MX = Math.round(W * 0.12); // 页边距（宽度的 12%）
 const TOP = 148;
-const BOTTOM = 128;
-const FOOT_Y = H - 70;
+const BOTTOM = 152;
+/** 页脚分隔线与页脚基线 */
+const FOOT_RULE_Y = H - 118;
+const FOOT_Y = H - 72;
 
 const PAPER = '#ede6d4'; // 与 decor_page 材质底色一致
-const INK = '#2b2117';
-const SUB = '#5a4c3a';
+const INK = '#251b11';
+const SUB = '#574937';
+const FAINT = '#7b6a53';
+const BRASS = '#a8853c';
 
 const FAMILY = '"Noto Serif SC", "Songti SC", "SimSun", serif';
 const MONO = '"Cascadia Mono", Consolas, "Courier New", monospace';
 
-type StyleKey = 'title' | 'meta' | 'body' | 'h2' | 'quote' | 'code' | 'tocTitle' | 'tocSub';
+type StyleKey =
+  | 'title'
+  | 'meta'
+  | 'body'
+  | 'h2'
+  | 'quote'
+  | 'code'
+  | 'tocTitle'
+  | 'tocNum'
+  | 'tocSub';
 
 interface Style {
   font: string;
@@ -46,15 +65,19 @@ interface Style {
 }
 
 const STYLES: Record<StyleKey, Style> = {
-  title: { font: `700 58px ${FAMILY}`, lineH: 86, color: INK },
+  title: { font: `700 58px ${FAMILY}`, lineH: 84, color: INK },
   meta: { font: `400 27px ${FAMILY}`, lineH: 46, color: SUB },
-  body: { font: `400 33px ${FAMILY}`, lineH: 63, color: INK }, // 行高约 1.9
-  h2: { font: `700 40px ${FAMILY}`, lineH: 70, color: INK },
-  quote: { font: `400 30px ${FAMILY}`, lineH: 57, color: SUB },
-  code: { font: `400 24px ${MONO}`, lineH: 42, color: '#4a3b2c' },
-  tocTitle: { font: `600 36px ${FAMILY}`, lineH: 60, color: INK },
-  tocSub: { font: `400 25px ${FAMILY}`, lineH: 42, color: SUB },
+  body: { font: `400 34px ${FAMILY}`, lineH: 60, color: INK }, // 行高约 1.76
+  h2: { font: `700 41px ${FAMILY}`, lineH: 70, color: INK },
+  quote: { font: `400 31px ${FAMILY}`, lineH: 56, color: SUB },
+  code: { font: `400 25px ${MONO}`, lineH: 42, color: '#4a3b2c' },
+  tocTitle: { font: `600 36px ${FAMILY}`, lineH: 56, color: INK },
+  tocNum: { font: `600 29px ${FAMILY}`, lineH: 56, color: FAINT },
+  tocSub: { font: `400 25px ${FAMILY}`, lineH: 38, color: SUB },
 };
+
+/** 页脚字体（比正文小一号，克制） */
+const FOOT_FONT = `400 24px ${FAMILY}`;
 
 /** 行首禁排标点（简单避头点：并入上一行） */
 const NO_LINE_START = '，。、；：！？）』」】〉》…‥·,.;:!?)]%~';
@@ -69,6 +92,10 @@ interface Line {
   style: StyleKey;
   /** 装饰分隔线（忽略 text） */
   rule?: boolean;
+  /** 属于哪个目录条目（悬停高亮用） */
+  tocSlug?: string;
+  /** 目录条目的序号行（悬停时转黄铜） */
+  isNum?: boolean;
 }
 
 interface HitRegion {
@@ -77,17 +104,31 @@ interface HitRegion {
   slug: string;
 }
 
+type PageKind = 'toc' | 'post';
+
 interface Page {
   lines: Line[];
   regions: HitRegion[];
   /** null = 不显示页码（目录页） */
   pageNo: number | null;
+  /** 所属序列（目录 / 单篇），决定页脚出现哪些控件 */
+  kind: PageKind;
+  /** 在序列中的 0 基下标（偶数在左页、奇数在右页） */
+  index: number;
+  /** 序列总页数（含收尾空白页） */
+  total: number;
+  /** 正文页数（页脚进度显示用，不含收尾空白页） */
+  contentTotal: number;
+  /** 末尾补的空白页（正文页数为奇数时凑满一跨） */
+  filler?: boolean;
 }
 
 type Block =
   | { kind: 'text'; text: string; style: StyleKey; spaceBefore: number; indent?: number; hang?: string }
   | { kind: 'rule'; spaceBefore: number }
   | { kind: 'toc'; title: string; sub: string; slug: string; index: number; spaceBefore: number }
+  /** 纯留白（页首也生效，用来排扉页） */
+  | { kind: 'space'; h: number }
   | { kind: 'break' };
 
 interface PostRef {
@@ -96,11 +137,39 @@ interface PostRef {
   date: string;
 }
 
+type Side = 'left' | 'right';
+
+/** 页脚控件动作 */
+type NavAction = 'prev' | 'next' | 'toc' | 'close';
+
+/** 悬停命中目标 */
+type HoverTarget =
+  | { kind: 'page' }
+  | { kind: 'toc'; slug: string }
+  | { kind: 'nav'; action: NavAction };
+
+interface FooterItem {
+  action: NavAction;
+  label: string;
+  align: 'left' | 'right';
+  /** 文字锚点 x（配合 align） */
+  x: number;
+  box: { x0: number; x1: number; y0: number; y1: number };
+}
+
 /** 装饰页面节点名：不在 naming.ts 命名契约内（该文件归属其他任务，不在本模块修改范围） */
 const PAGE_L_NAME = 'decor_page_l';
 const PAGE_R_NAME = 'decor_page_r';
 
-const FLIP_DURATION = 0.52;
+/** 翻页时长：手上翻一页纸大致就是这个量级，太长会显得黏 */
+const FLIP_DURATION = 0.38;
+/** 翻页缓动：平滑起步 + 平滑落定（smoothstep），比 easeOut 更像纸被抬起再落下 */
+const flipEase = (t: number): number => t * t * (3 - 2 * t);
+/** 翻页时纸张抬起的弧高（米） */
+const FLIP_LIFT = 0.007;
+
+/** 滚轮累计到这个量才翻一页（避免触控板惯性连翻） */
+const WHEEL_STEP = 90;
 
 export class BookRenderer {
   /** ESC / 点击书外请求退出（由 main.ts 接到 unfocus） */
@@ -117,6 +186,12 @@ export class BookRenderer {
   private sheetL: THREE.Mesh | null = null;
   private sheetR: THREE.Mesh | null = null;
   private flipPivot: THREE.Group | null = null;
+  private flipBaseY = 0;
+  /** 翻动页几何 + 原始顶点（翻页途中做纸张弯曲，翻完复位） */
+  private flipGeo: THREE.PlaneGeometry | null = null;
+  private flipBase: Float32Array | null = null;
+  private flipW = 1;
+  private flipBow = 0;
 
   private canvasL = document.createElement('canvas');
   private canvasR = document.createElement('canvas');
@@ -136,6 +211,20 @@ export class BookRenderer {
   /** 当前静态双页展示的内容 */
   private curL: Page | null = null;
   private curR: Page | null = null;
+
+  /** 悬停状态：只在 key 变化时重绘受影响的那一页 */
+  private hoverSide: Side | null = null;
+  private hoverTarget: HoverTarget | null = null;
+  private hoverKey = '';
+
+  /** 书外「缓冲区」：落在这个范围内的点击不算退出（防误触） */
+  private guardReady = false;
+  private guardY = 0;
+  private guardMin = new THREE.Vector2();
+  private guardMax = new THREE.Vector2();
+
+  private wheelAccum = 0;
+  private wheelAt = 0;
 
   private raycaster = new THREE.Raycaster();
   private disposed = false;
@@ -195,13 +284,20 @@ export class BookRenderer {
     const pageW = bbR.max.x - bbR.min.x;
     const pageD = bbR.max.z - bbR.min.z;
     const spineY = Math.max(bbL.max.y, bbR.max.y) + 0.0012;
+    this.flipBaseY = spineY;
     this.flipPivot = new THREE.Group();
     this.flipPivot.position.set(spineX, spineY, (bbR.min.z + bbR.max.z) / 2);
     this.flipPivot.visible = false;
 
-    const flipGeo = new THREE.PlaneGeometry(pageW * 0.985, pageD * 0.985);
+    // 分段够多才能在翻页途中弯出纸感（顶点极少，逐帧形变开销可忽略）
+    const flipW = pageW * 0.985;
+    const flipGeo = new THREE.PlaneGeometry(flipW, pageD * 0.985, 16, 2);
     flipGeo.rotateX(-Math.PI / 2);
-    flipGeo.translate((pageW * 0.985) / 2, 0, 0);
+    flipGeo.translate(flipW / 2, 0, 0);
+    this.flipGeo = flipGeo;
+    this.flipBase = (flipGeo.attributes.position.array as Float32Array).slice();
+    this.flipW = flipW;
+    this.flipBow = flipW * 0.12;
     const front = new THREE.Mesh(
       flipGeo,
       new THREE.MeshStandardMaterial({ map: this.texFlipF, roughness: 0.9, metalness: 0 }),
@@ -221,9 +317,11 @@ export class BookRenderer {
     this.flipPivot.add(front, back);
     this.group.add(this.flipPivot);
 
+    this.buildGuard();
+
     // 初始：空白纸面（颜色与页面一致，远看无感）
-    this.drawPage(this.canvasL, null, 'left');
-    this.drawPage(this.canvasR, null, 'right');
+    this.drawPage(this.canvasL, null, 'left', null);
+    this.drawPage(this.canvasR, null, 'right', null);
     this.commitTextures();
     this.ready = true;
     this.manager.invalidate();
@@ -242,54 +340,59 @@ export class BookRenderer {
 
   // ———————————————————————— 对外交互 ————————————————————————
 
-  /** 聚焦态开关：接管左右方向键翻页与 ESC 退出 */
+  /** 聚焦态开关：接管左右方向键翻页、滚轮翻页与 ESC 退出 */
   setFocused(on: boolean): void {
     if (this.focused === on) return;
     this.focused = on;
-    if (on) window.addEventListener('keydown', this.onKey);
-    else window.removeEventListener('keydown', this.onKey);
+    const canvas = this.manager.canvas;
+    if (on) {
+      window.addEventListener('keydown', this.onKey);
+      canvas.addEventListener('wheel', this.onWheel, { passive: false });
+      canvas.addEventListener('pointerleave', this.onPointerLeave);
+    } else {
+      window.removeEventListener('keydown', this.onKey);
+      canvas.removeEventListener('wheel', this.onWheel);
+      canvas.removeEventListener('pointerleave', this.onPointerLeave);
+      this.clearHover();
+    }
   }
 
   /**
    * 点击分发（InteractionManager 在 book 模式调用）。
-   * 返回 true = 已被书页消费；false = 未命中书页（调用方可视为退出意图）。
+   * 返回 true = 已被书页消费；false = 明确点在书外（调用方视为退出意图）。
    */
   handleClick(raycaster: THREE.Raycaster): boolean {
     if (!this.ready || !this.sheetL || !this.sheetR) return false;
-    const hits = raycaster.intersectObjects([this.sheetL, this.sheetR], false);
-    const hit = hits[0];
-    if (!hit || !hit.uv) return false;
+    const probe = this.probe(raycaster);
+    // 没命中纸面：先看是否落在书周围的缓冲区，是则吞掉（贴边点击不至于直接合上）
+    if (!probe) return this.hitGuard(raycaster);
     if (this.flipping) return true;
 
-    const isRight = hit.object === this.sheetR;
-    const cx = hit.uv.x * W;
-    const cy = (1 - hit.uv.y) * H;
-
-    // 目录页：命中文章条目 → 打开该篇（条目可能溢出到后续跨的左页，两页都要查）
-    if (this.mode === 'toc') {
-      const page = isRight ? this.curR : this.curL;
-      const region = page?.regions.find((r) => cy >= r.y0 - 10 && cy <= r.y1 + 10);
-      if (region) {
-        void this.openPost(region.slug);
-        return true;
-      }
-    }
-    // 右页右侧四分之一 → 下一跨；左页左侧四分之一 → 上一跨
-    if (isRight && cx > W * 0.75) {
-      this.nextSpread();
+    const target = probe.target;
+    if (target.kind === 'toc') {
+      void this.openPost(target.slug);
       return true;
     }
-    if (!isRight && cx < W * 0.25) {
-      this.prevSpread();
+    if (target.kind === 'nav') {
+      if (target.action === 'next') this.nextSpread();
+      else if (target.action === 'prev') this.prevSpread();
+      else if (target.action === 'toc') this.backToToc();
+      else this.onRequestExit?.();
       return true;
     }
     return true; // 命中书页其余区域：消费掉，避免误触退出
   }
 
-  /** 悬停命中测试（用于指针样式） */
+  /**
+   * 悬停命中测试（用于指针样式 + 纸面高亮）。
+   * 返回 true 表示指针下有可点击的东西（InteractionManager 据此切 pointer 光标）。
+   */
   hitTest(raycaster: THREE.Raycaster): boolean {
     if (!this.ready || !this.sheetL || !this.sheetR) return false;
-    return raycaster.intersectObjects([this.sheetL, this.sheetR], false).length > 0;
+    if (this.flipping) return false;
+    const probe = this.probe(raycaster);
+    this.applyHover(probe);
+    return probe !== null && probe.target.kind !== 'page';
   }
 
   /** 打开某篇文章（翻页动画进入其第一跨） */
@@ -316,17 +419,23 @@ export class BookRenderer {
     if (!this.ready || this.flipping) return;
     if (this.spread === 0) {
       // 文章第一跨再往前 = 合上文章回到目录
-      if (this.mode === 'post' && this.tocPages) {
-        this.mode = 'toc';
-        this.slug = null;
-        this.flip('prev', this.tocPages[0] ?? null, this.tocPages[1] ?? null);
-      }
+      this.backToToc();
       return;
     }
     const pages = this.currentPages();
     if (!pages) return;
     this.spread -= 1;
     this.flip('prev', pages[this.spread * 2] ?? null, pages[this.spread * 2 + 1] ?? null);
+  }
+
+  /** 回到目录（页脚「目录」二字 / 文章第一跨往前翻） */
+  backToToc(): void {
+    if (!this.ready || this.flipping) return;
+    if (this.mode !== 'post' || !this.tocPages) return;
+    this.mode = 'toc';
+    this.slug = null;
+    this.spread = 0;
+    this.flip('prev', this.tocPages[0] ?? null, this.tocPages[1] ?? null);
   }
 
   setVisible(v: boolean): void {
@@ -416,6 +525,37 @@ export class BookRenderer {
     return mesh;
   }
 
+  /** 书周围的点击缓冲区（世界空间轴对齐矩形，比双页大一圈） */
+  private buildGuard(): void {
+    if (!this.sheetL || !this.sheetR) return;
+    const box = new THREE.Box3().setFromObject(this.sheetL);
+    box.union(new THREE.Box3().setFromObject(this.sheetR));
+    const cx = (box.min.x + box.max.x) / 2;
+    const cz = (box.min.z + box.max.z) / 2;
+    const hx = ((box.max.x - box.min.x) / 2) * 1.3;
+    const hz = ((box.max.z - box.min.z) / 2) * 1.5;
+    this.guardY = box.max.y;
+    this.guardMin.set(cx - hx, cz - hz);
+    this.guardMax.set(cx + hx, cz + hz);
+    this.guardReady = true;
+  }
+
+  /** 射线是否落在书周围的缓冲区（用书页所在水平面求交） */
+  private hitGuard(rc: THREE.Raycaster): boolean {
+    if (!this.guardReady) return false;
+    const ray = rc.ray;
+    if (Math.abs(ray.direction.y) < 1e-5) return false;
+    const t = (this.guardY - ray.origin.y) / ray.direction.y;
+    if (t <= 0) return false;
+    const p = ray.at(t, new THREE.Vector3());
+    return (
+      p.x >= this.guardMin.x &&
+      p.x <= this.guardMax.x &&
+      p.z >= this.guardMin.y &&
+      p.z <= this.guardMax.y
+    );
+  }
+
   private makeTexture(canvas: HTMLCanvasElement, mirrored: boolean): THREE.CanvasTexture {
     const tex = new THREE.CanvasTexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
@@ -426,6 +566,140 @@ export class BookRenderer {
       tex.offset.x = 1;
     }
     return tex;
+  }
+
+  // ———————————————————————— 命中与悬停 ————————————————————————
+
+  /** 把射线解析成「哪一页 + 命中什么」 */
+  private probe(rc: THREE.Raycaster): { side: Side; target: HoverTarget } | null {
+    if (!this.sheetL || !this.sheetR) return null;
+    const hit = rc.intersectObjects([this.sheetL, this.sheetR], false)[0];
+    if (!hit || !hit.uv) return null;
+
+    const side: Side = hit.object === this.sheetR ? 'right' : 'left';
+    const page = side === 'right' ? this.curR : this.curL;
+    const cx = hit.uv.x * W;
+    const cy = (1 - hit.uv.y) * H;
+
+    if (page) {
+      // 1) 页脚控件优先
+      for (const item of this.footerItems(page, side)) {
+        if (cx >= item.box.x0 && cx <= item.box.x1 && cy >= item.box.y0 && cy <= item.box.y1) {
+          return { side, target: { kind: 'nav', action: item.action } };
+        }
+      }
+      // 2) 目录条目（只有目录页有 regions）
+      const region = page.regions.find((r) => cy >= r.y0 - 10 && cy <= r.y1 + 10);
+      if (region) return { side, target: { kind: 'toc', slug: region.slug } };
+      // 3) 外侧四分之一 = 大翻页热区（与翘角提示同一动作）
+      if (side === 'right' && cx > W * 0.75 && this.canNext(page)) {
+        return { side, target: { kind: 'nav', action: 'next' } };
+      }
+      if (side === 'left' && cx < W * 0.25 && this.canPrev(page)) {
+        return { side, target: { kind: 'nav', action: 'prev' } };
+      }
+    }
+    return { side, target: { kind: 'page' } };
+  }
+
+  private hoverKeyOf(probe: { side: Side; target: HoverTarget } | null): string {
+    if (!probe) return '';
+    const t = probe.target;
+    if (t.kind === 'toc') return `${probe.side}:toc:${t.slug}`;
+    if (t.kind === 'nav') return `${probe.side}:nav:${t.action}`;
+    return `${probe.side}:page`;
+  }
+
+  /** 只在命中目标变化时重绘受影响的那一页（绝不每帧重绘） */
+  private applyHover(probe: { side: Side; target: HoverTarget } | null): void {
+    const key = this.hoverKeyOf(probe);
+    if (key === this.hoverKey) return;
+    const prevSide = this.hoverSide;
+    this.hoverKey = key;
+    this.hoverSide = probe && probe.target.kind !== 'page' ? probe.side : null;
+    this.hoverTarget = probe && probe.target.kind !== 'page' ? probe.target : null;
+
+    const sides = new Set<Side>();
+    if (prevSide) sides.add(prevSide);
+    if (this.hoverSide) sides.add(this.hoverSide);
+    if (sides.size === 0) return;
+    for (const side of sides) this.repaint(side);
+    this.manager.invalidate();
+  }
+
+  private clearHover(): void {
+    if (!this.hoverSide) {
+      this.hoverKey = '';
+      return;
+    }
+    const side = this.hoverSide;
+    this.hoverSide = null;
+    this.hoverTarget = null;
+    this.hoverKey = '';
+    this.repaint(side);
+    this.manager.invalidate();
+  }
+
+  private hoverFor(side: Side): HoverTarget | null {
+    return this.hoverSide === side ? this.hoverTarget : null;
+  }
+
+  /** 重绘单侧纸面（悬停反馈用，一次命中变化只做一次） */
+  private repaint(side: Side): void {
+    if (side === 'left') {
+      this.drawPage(this.canvasL, this.curL, 'left', this.hoverFor('left'));
+      if (this.texL) this.texL.needsUpdate = true;
+    } else {
+      this.drawPage(this.canvasR, this.curR, 'right', this.hoverFor('right'));
+      if (this.texR) this.texR.needsUpdate = true;
+    }
+  }
+
+  // ———————————————————————— 页脚控件 ————————————————————————
+
+  private spreadOf(page: Page): number {
+    return Math.floor(page.index / 2);
+  }
+
+  private canPrev(page: Page): boolean {
+    return this.spreadOf(page) > 0 || page.kind === 'post';
+  }
+
+  private canNext(page: Page): boolean {
+    return (this.spreadOf(page) + 1) * 2 < page.total;
+  }
+
+  /** 页脚控件布局（绘制与命中共用同一份，保证「看到哪就能点哪」） */
+  private footerItems(page: Page, side: Side): FooterItem[] {
+    const items: FooterItem[] = [];
+    const push = (action: NavAction, label: string, align: 'left' | 'right', x: number): void => {
+      this.measureCtx.font = FOOT_FONT;
+      const w = this.measureCtx.measureText(label).width;
+      const pad = 20;
+      const x0 = align === 'left' ? x - pad : x - w - pad;
+      items.push({
+        action,
+        label,
+        align,
+        x,
+        box: { x0, x1: x0 + w + pad * 2, y0: FOOT_Y - 34, y1: FOOT_Y + 34 },
+      });
+    };
+
+    if (side === 'left') {
+      if (this.canPrev(page)) push('prev', '‹ 上一页', 'left', MX);
+      if (page.kind === 'post') push('toc', '目录', 'right', W - MX);
+    } else {
+      push('close', 'Esc 合上', 'left', MX);
+      if (this.canNext(page)) push('next', '下一页 ›', 'right', W - MX);
+    }
+    return items;
+  }
+
+  /** 页脚中央的页码 / 进度 */
+  private footerCenter(page: Page, side: Side): string {
+    if (page.pageNo === null) return '';
+    return side === 'left' ? `· ${page.pageNo} ·` : `${page.pageNo} / ${page.contentTotal}`;
   }
 
   // ———————————————————————— 内容获取与解析 ————————————————————————
@@ -467,7 +741,7 @@ export class BookRenderer {
     if (cached) return cached;
     const html = await this.fetchText(postPartial(slug));
     if (!html) return null;
-    const pages = this.paginate(this.parsePost(html));
+    const pages = this.finalize(this.paginate(this.parsePost(html)), 'post');
     this.postCache.set(slug, pages);
     return pages;
   }
@@ -536,12 +810,13 @@ export class BookRenderer {
   /** 目录：左页扉页 + 右页起的文章清单 */
   private buildTocPages(posts: PostRef[]): Page[] {
     const blocks: Block[] = [
-      { kind: 'text', text: `${SITE.name} 的笔记本`, style: 'title', spaceBefore: 300 },
+      { kind: 'space', h: 258 },
+      { kind: 'text', text: `${SITE.name} 的笔记本`, style: 'title', spaceBefore: 0 },
       { kind: 'rule', spaceBefore: 40 },
       { kind: 'text', text: '在安静的环境里写下的思考、设计与记录。', style: 'quote', spaceBefore: 44 },
-      { kind: 'text', text: '点击右页的篇目开始阅读。', style: 'tocSub', spaceBefore: 220 },
-      { kind: 'text', text: '点击页面外缘可以翻页，也可以用左右方向键。', style: 'tocSub', spaceBefore: 10 },
-      { kind: 'text', text: '按 Esc 或点击书页之外合上笔记本。', style: 'tocSub', spaceBefore: 10 },
+      { kind: 'space', h: 452 },
+      { kind: 'text', text: '点击右页的篇目开始阅读。', style: 'tocSub', spaceBefore: 0 },
+      { kind: 'text', text: '翻页可以点页脚、点页面外缘的翘角，或按左右方向键。', style: 'tocSub', spaceBefore: 12 },
       { kind: 'break' },
       { kind: 'text', text: '目 录', style: 'h2', spaceBefore: 0 },
       { kind: 'rule', spaceBefore: 26 },
@@ -561,12 +836,37 @@ export class BookRenderer {
           sub: p.date,
           slug: p.slug,
           index: i + 1,
-          spaceBefore: i === 0 ? 44 : 34,
+          spaceBefore: i === 0 ? 44 : 30,
         });
       });
     }
-    const pages = this.paginate(blocks);
+    const pages = this.finalize(this.paginate(blocks), 'toc');
     for (const page of pages) page.pageNo = null;
+    return pages;
+  }
+
+  /** 给分页结果补上序列元信息（页脚控件按它决定出现哪些项） */
+  private finalize(pages: Page[], kind: PageKind): Page[] {
+    const contentTotal = pages.length;
+    // 正文停在左页时，右页补一张收尾空白页：保留「合上」入口并落一个「全文完」
+    if (pages.length % 2 === 1) {
+      pages.push({
+        lines: [],
+        regions: [],
+        pageNo: null,
+        kind,
+        index: 0,
+        total: 0,
+        contentTotal: 0,
+        filler: true,
+      });
+    }
+    pages.forEach((p, i) => {
+      p.kind = kind;
+      p.index = i;
+      p.total = pages.length;
+      p.contentTotal = contentTotal;
+    });
     return pages;
   }
 
@@ -616,12 +916,21 @@ export class BookRenderer {
   /** 把块序列排入若干页（左页 = 偶数下标、右页 = 奇数下标） */
   private paginate(blocks: Block[]): Page[] {
     const pages: Page[] = [];
-    let cur: Page = { lines: [], regions: [], pageNo: 1 };
+    const blank = (no: number): Page => ({
+      lines: [],
+      regions: [],
+      pageNo: no,
+      kind: 'post',
+      index: 0,
+      total: 0,
+      contentTotal: 0,
+    });
+    let cur: Page = blank(1);
     let y = TOP;
 
     const closePage = (): void => {
       pages.push(cur);
-      cur = { lines: [], regions: [], pageNo: pages.length + 1 };
+      cur = blank(pages.length + 1);
       y = TOP;
     };
     const fit = (need: number): void => {
@@ -633,6 +942,10 @@ export class BookRenderer {
         closePage();
         continue;
       }
+      if (block.kind === 'space') {
+        y += block.h;
+        continue;
+      }
       if (block.kind === 'rule') {
         fit(block.spaceBefore + 8);
         if (cur.lines.length > 0) y += block.spaceBefore;
@@ -641,24 +954,39 @@ export class BookRenderer {
         continue;
       }
       if (block.kind === 'toc') {
-        const numGutter = 64;
+        const numGutter = 68;
         const titleLines = this.wrap(block.title, 'tocTitle', W - MX * 2 - numGutter).slice(0, 2);
         const need =
           block.spaceBefore + titleLines.length * STYLES.tocTitle.lineH + STYLES.tocSub.lineH;
         fit(need);
         const startY = cur.lines.length > 0 ? y + block.spaceBefore : y;
         y = startY;
-        titleLines.forEach((lineText, i) => {
+        cur.lines.push({
+          text: String(block.index).padStart(2, '0'),
+          x: MX,
+          y,
+          style: 'tocNum',
+          tocSlug: block.slug,
+          isNum: true,
+        });
+        titleLines.forEach((lineText) => {
           cur.lines.push({
-            text: i === 0 ? `${String(block.index).padStart(2, '0')}  ${lineText}` : lineText,
-            x: i === 0 ? MX : MX + numGutter,
+            text: lineText,
+            x: MX + numGutter,
             y,
             style: 'tocTitle',
+            tocSlug: block.slug,
           });
           y += STYLES.tocTitle.lineH;
         });
         if (block.sub) {
-          cur.lines.push({ text: block.sub, x: MX + numGutter, y, style: 'tocSub' });
+          cur.lines.push({
+            text: block.sub,
+            x: MX + numGutter,
+            y,
+            style: 'tocSub',
+            tocSlug: block.slug,
+          });
           y += STYLES.tocSub.lineH;
         }
         cur.regions.push({ y0: startY, y1: y, slug: block.slug });
@@ -697,7 +1025,12 @@ export class BookRenderer {
 
   // ———————————————————————— 绘制 ————————————————————————
 
-  private drawPage(canvas: HTMLCanvasElement, page: Page | null, side: 'left' | 'right'): void {
+  private drawPage(
+    canvas: HTMLCanvasElement,
+    page: Page | null,
+    side: Side,
+    hover: HoverTarget | null,
+  ): void {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.clearRect(0, 0, W, H);
@@ -715,6 +1048,15 @@ export class BookRenderer {
 
     if (!page) return;
 
+    // 收尾空白页：给一个「全文完」，读完有个着落
+    if (page.filler && page.kind === 'post') this.drawEndMark(ctx);
+
+    // 目录条目悬停底纹（画在文字之下）
+    if (hover?.kind === 'toc') {
+      const region = page.regions.find((r) => r.slug === hover.slug);
+      if (region) this.drawTocHighlight(ctx, region);
+    }
+
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
     for (const line of page.lines) {
@@ -728,19 +1070,127 @@ export class BookRenderer {
         ctx.stroke();
         continue;
       }
+      const lit =
+        hover?.kind === 'toc' && line.tocSlug !== undefined && line.tocSlug === hover.slug;
       ctx.font = style.font;
-      ctx.fillStyle = style.color;
+      ctx.fillStyle = lit && line.isNum ? BRASS : style.color;
       ctx.fillText(line.text, line.x, line.y + style.lineH / 2, W - MX - line.x + 30);
     }
 
-    // 页脚页码（外侧角）
-    if (page.pageNo !== null) {
-      ctx.font = `400 24px ${FAMILY}`;
-      ctx.fillStyle = SUB;
-      ctx.textAlign = side === 'left' ? 'left' : 'right';
-      ctx.fillText(`· ${page.pageNo} ·`, side === 'left' ? MX : W - MX, FOOT_Y);
-      ctx.textAlign = 'left';
+    // 外下角翘角：常态极淡，悬停加深转黄铜（告诉你这一角可以翻）
+    const navAction = hover?.kind === 'nav' ? hover.action : null;
+    if (side === 'left' && this.canPrev(page)) {
+      this.drawCorner(ctx, 'left', navAction === 'prev');
     }
+    if (side === 'right' && this.canNext(page)) {
+      this.drawCorner(ctx, 'right', navAction === 'next');
+    }
+
+    this.drawFooter(ctx, page, side, navAction);
+  }
+
+  /** 收尾空白页中部的「全文完」 */
+  private drawEndMark(ctx: CanvasRenderingContext2D): void {
+    const y = Math.round(H * 0.42);
+    ctx.save();
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+    ctx.font = `400 26px ${FAMILY}`;
+    ctx.fillStyle = FAINT;
+    ctx.fillText('全 文 完', W / 2, y);
+    ctx.strokeStyle = 'rgba(168, 133, 60, 0.42)';
+    ctx.lineWidth = 1.4;
+    for (const dir of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(W / 2 + dir * 78, y);
+      ctx.lineTo(W / 2 + dir * 148, y);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  private drawTocHighlight(ctx: CanvasRenderingContext2D, region: HitRegion): void {
+    const x = MX - 30;
+    const w = W - MX * 2 + 60;
+    const y = region.y0 - 12;
+    const h = region.y1 - region.y0 + 22;
+    ctx.fillStyle = 'rgba(168, 133, 60, 0.11)';
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') ctx.roundRect(x, y, w, h, 10);
+    else ctx.rect(x, y, w, h);
+    ctx.fill();
+    // 左侧一道黄铜细条（像书签）
+    ctx.fillStyle = 'rgba(168, 133, 60, 0.8)';
+    ctx.fillRect(x - 6, y + 4, 3, h - 8);
+  }
+
+  /** 页面外下角的翘角（纸自己的语言，不是网页按钮） */
+  private drawCorner(ctx: CanvasRenderingContext2D, side: Side, active: boolean): void {
+    const s = active ? 112 : 86;
+    const outerX = side === 'left' ? 0 : W;
+    const dir = side === 'left' ? 1 : -1;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(outerX, H - s);
+    ctx.lineTo(outerX, H);
+    ctx.lineTo(outerX + dir * s, H);
+    ctx.closePath();
+    const g = ctx.createLinearGradient(outerX, H, outerX + dir * s * 0.75, H - s * 0.75);
+    g.addColorStop(0, `rgba(255, 252, 244, ${active ? 0.55 : 0.36})`);
+    g.addColorStop(1, `rgba(43, 33, 23, ${active ? 0.18 : 0.12})`);
+    ctx.fillStyle = g;
+    ctx.fill();
+    // 折痕
+    ctx.strokeStyle = active ? 'rgba(168, 133, 60, 0.82)' : 'rgba(43, 33, 23, 0.3)';
+    ctx.lineWidth = active ? 2.6 : 1.6;
+    ctx.beginPath();
+    ctx.moveTo(outerX, H - s);
+    ctx.lineTo(outerX + dir * s, H);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** 页脚：翻页 / 目录 / 合上 + 页码进度，一行小字，长在纸上 */
+  private drawFooter(
+    ctx: CanvasRenderingContext2D,
+    page: Page,
+    side: Side,
+    navAction: NavAction | null,
+  ): void {
+    const items = this.footerItems(page, side);
+    const center = this.footerCenter(page, side);
+    if (items.length === 0 && !center) return;
+
+    ctx.strokeStyle = 'rgba(43, 33, 23, 0.14)';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(MX, FOOT_RULE_Y);
+    ctx.lineTo(W - MX, FOOT_RULE_Y);
+    ctx.stroke();
+
+    ctx.font = FOOT_FONT;
+    ctx.textBaseline = 'middle';
+    for (const item of items) {
+      const on = navAction === item.action;
+      ctx.fillStyle = on ? BRASS : SUB;
+      ctx.textAlign = item.align;
+      ctx.fillText(item.label, item.x, FOOT_Y);
+      if (on) {
+        ctx.strokeStyle = 'rgba(168, 133, 60, 0.7)';
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(item.box.x0 + 20, FOOT_Y + 22);
+        ctx.lineTo(item.box.x1 - 20, FOOT_Y + 22);
+        ctx.stroke();
+      }
+    }
+    if (center) {
+      ctx.textAlign = 'center';
+      ctx.fillStyle = FAINT;
+      ctx.fillText(center, W / 2, FOOT_Y);
+    }
+    ctx.textAlign = 'left';
   }
 
   private commitTextures(): void {
@@ -752,8 +1202,11 @@ export class BookRenderer {
   private showSpread(left: Page | null, right: Page | null): void {
     this.curL = left;
     this.curR = right;
-    this.drawPage(this.canvasL, left, 'left');
-    this.drawPage(this.canvasR, right, 'right');
+    this.hoverSide = null;
+    this.hoverTarget = null;
+    this.hoverKey = '';
+    this.drawPage(this.canvasL, left, 'left', null);
+    this.drawPage(this.canvasR, right, 'right', null);
     this.commitTextures();
     this.manager.invalidate();
   }
@@ -771,20 +1224,25 @@ export class BookRenderer {
    * prev（左→右）：背面 = 旧左页，正面 = 新右页；静态左页先换新，翻完右页落定。
    */
   private flip(dir: 'next' | 'prev', newL: Page | null, newR: Page | null): void {
+    AudioManager.current?.paper();
     if (!this.flipPivot || this.reducedMotion) {
       this.showSpread(newL, newR);
       return;
     }
     this.flipping = true;
+    // 翻页期间旧的悬停高亮失效
+    this.hoverSide = null;
+    this.hoverTarget = null;
+    this.hoverKey = '';
 
     if (dir === 'next') {
-      this.drawPage(this.canvasFlipF, this.curR, 'right');
-      this.drawPage(this.canvasFlipB, newL, 'left');
-      this.drawPage(this.canvasR, newR, 'right');
+      this.drawPage(this.canvasFlipF, this.curR, 'right', null);
+      this.drawPage(this.canvasFlipB, newL, 'left', null);
+      this.drawPage(this.canvasR, newR, 'right', null);
     } else {
-      this.drawPage(this.canvasFlipB, this.curL, 'left');
-      this.drawPage(this.canvasFlipF, newR, 'right');
-      this.drawPage(this.canvasL, newL, 'left');
+      this.drawPage(this.canvasFlipB, this.curL, 'left', null);
+      this.drawPage(this.canvasFlipF, newR, 'right', null);
+      this.drawPage(this.canvasL, newL, 'left', null);
     }
     if (this.texFlipF) this.texFlipF.needsUpdate = true;
     if (this.texFlipB) this.texFlipB.needsUpdate = true;
@@ -799,16 +1257,21 @@ export class BookRenderer {
 
     this.manager.tweens.run({
       duration: FLIP_DURATION,
-      ease: easeOutCubic,
+      ease: flipEase,
       onUpdate: (t) => {
         pivot.rotation.z = dir === 'next' ? Math.PI * t : Math.PI * (1 - t);
+        // 纸被抬起再落下的小弧线，避免贴着桌面扫过去
+        pivot.position.y = this.flipBaseY + FLIP_LIFT * Math.sin(Math.PI * t);
+        this.bendFlipPage(t);
         this.manager.invalidate();
       },
       onComplete: () => {
         // 静态页落定，隐藏翻动页
-        if (dir === 'next') this.drawPage(this.canvasL, this.curL, 'left');
-        else this.drawPage(this.canvasR, this.curR, 'right');
+        if (dir === 'next') this.drawPage(this.canvasL, this.curL, 'left', null);
+        else this.drawPage(this.canvasR, this.curR, 'right', null);
         this.commitTextures();
+        pivot.position.y = this.flipBaseY;
+        this.bendFlipPage(0);
         pivot.visible = false;
         this.flipping = false;
         this.manager.invalidate();
@@ -816,13 +1279,33 @@ export class BookRenderer {
     });
   }
 
-  // ———————————————————————— 键盘与字体 ————————————————————————
+  /**
+   * 翻页途中把纸弯出弧度（沿书脊→外缘方向一道正弦鼓包，中段最鼓、两端归零）。
+   * 只有 51 个顶点，逐帧形变的代价远低于一次纹理上传。
+   */
+  private bendFlipPage(t: number): void {
+    const geo = this.flipGeo;
+    const base = this.flipBase;
+    if (!geo || !base) return;
+    const pos = geo.attributes.position as THREE.BufferAttribute;
+    const arr = pos.array as Float32Array;
+    const amp = this.flipBow * Math.sin(Math.PI * t);
+    for (let i = 0; i < pos.count; i++) {
+      const o = i * 3;
+      const u = Math.min(1, Math.max(0, base[o] / this.flipW));
+      arr[o + 1] = base[o + 1] + amp * Math.sin(Math.PI * u);
+    }
+    pos.needsUpdate = true;
+    geo.computeVertexNormals();
+  }
+
+  // ———————————————————————— 键盘 / 滚轮 / 字体 ————————————————————————
 
   private onKey = (e: KeyboardEvent): void => {
-    if (e.key === 'ArrowRight') {
+    if (e.key === 'ArrowRight' || e.key === 'PageDown') {
       e.preventDefault();
       this.nextSpread();
-    } else if (e.key === 'ArrowLeft') {
+    } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
       e.preventDefault();
       this.prevSpread();
     } else if (e.key === 'Escape') {
@@ -831,12 +1314,34 @@ export class BookRenderer {
     }
   };
 
+  /** 滚轮翻页：累计到一档才翻，避免触控板惯性连翻 */
+  private onWheel = (e: WheelEvent): void => {
+    if (!this.focused || !this.ready) return;
+    e.preventDefault();
+    const now = performance.now();
+    if (now - this.wheelAt > 400) this.wheelAccum = 0;
+    this.wheelAt = now;
+    if (this.flipping) return;
+    this.wheelAccum += e.deltaY + e.deltaX;
+    if (Math.abs(this.wheelAccum) < WHEEL_STEP) return;
+    const forward = this.wheelAccum > 0;
+    this.wheelAccum = 0;
+    if (forward) this.nextSpread();
+    else this.prevSpread();
+  };
+
+  private onPointerLeave = (): void => {
+    this.clearHover();
+    this.manager.canvas.style.cursor = 'default';
+  };
+
   /** canvas 绘制中文前确保 Noto Serif SC 就绪（失败回落系统衬线） */
   private async ensureFonts(): Promise<void> {
     try {
       await Promise.all([
         document.fonts.load(`700 58px "Noto Serif SC"`, '目录笔记'),
-        document.fonts.load(`400 33px "Noto Serif SC"`, '目录笔记'),
+        document.fonts.load(`600 36px "Noto Serif SC"`, '目录笔记'),
+        document.fonts.load(`400 34px "Noto Serif SC"`, '目录笔记'),
       ]);
       await document.fonts.ready;
     } catch {

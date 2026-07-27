@@ -66,9 +66,10 @@ export const HOTSPOTS: Record<HotspotId, HotspotDef> = {
   drawer: {
     id: 'drawer',
     label: '抽屉',
-    hint: '关于我',
-    behavior: 'content',
-    partial: '/partials/about/',
+    hint: '几件旧物 · 就地翻看',
+    // 就地翻看：拉开抽屉后物件可点，彩蛋卡片渲染在 3D 里（不开面板、不 pushState）；
+    // /about/ 完整页面仍然可用（SEO 与直接访问）
+    behavior: 'in-scene',
     href: '/about/',
   },
   coffee: {

@@ -5,10 +5,13 @@
  * 选 meshopt 而非 draco：解码器更小、解码更快，加载端已配 MeshoptDecoder。
  */
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const dir = resolve(process.argv[2] ?? 'public/models');
+// 未压缩备份必须放在 public/ 之外，否则会被原样发布（18MB 的 raw.glb 进 dist）
+const backupDir = resolve('assets-src/models-raw');
+mkdirSync(backupDir, { recursive: true });
 const files = ['clock.glb', 'desk.glb'];
 
 for (const file of files) {
@@ -17,7 +20,8 @@ for (const file of files) {
     console.warn(`跳过（不存在）: ${path}`);
     continue;
   }
-  const backup = path.replace(/\.glb$/, '.raw.glb');
+  // 备份到 public 外部目录，防止 18MB raw 文件泄漏进 dist
+  const backup = join(backupDir, file);
   copyFileSync(path, backup);
   const before = statSync(path).size;
 

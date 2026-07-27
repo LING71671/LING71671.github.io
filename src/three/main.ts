@@ -12,6 +12,7 @@ import { buildPlaceholderScene } from './placeholder/PlaceholderDesk';
 import { AssetLoader } from './core/AssetLoader';
 import { BookRenderer } from './content/BookRenderer';
 import { ScreenOS } from './content/ScreenOS';
+import { DrawerItems } from './content/DrawerItems';
 import { withBase } from '../lib/url';
 import { HOTSPOTS, type HotspotId } from '../lib/hotspots';
 import type { QualityTier } from '../scripts/desk/storage';
@@ -53,6 +54,7 @@ export class DeskScene {
   private resizeObserver: ResizeObserver | null = null;
   private bookRenderer: BookRenderer | null = null;
   private screenOS: ScreenOS | null = null;
+  private drawerItems: DrawerItems | null = null;
   /** 当前就地阅读聚焦的热点（notebook 书页 / monitor 屏幕系统） */
   private inSceneId: HotspotId | null = null;
   /** desk.glb 后台加载完成（占位路径下立即 resolved） */
@@ -120,6 +122,15 @@ export class DeskScene {
       this.screenOS = new ScreenOS(this.manager, this.registry);
       this.screenOS.onRequestExit = () => void this.unfocus();
       this.screenOS.mount();
+      // 抽屉物件：拉开后可点的小物 + 彩蛋卡片（不弹 HTML 面板）
+      this.drawerItems = new DrawerItems(this.manager, this.registry);
+      this.drawerItems.onRequestExit = () => void this.unfocus();
+      this.interaction.onDrawerClick = (rc) =>
+        this.drawerItems?.handleClick(rc) ?? false;
+      this.interaction.onDrawerHover = (rc) =>
+        this.drawerItems?.hitTest(rc) ?? false;
+      this.interaction.onDrawerMiss = () => void this.unfocus();
+      void this.drawerItems.mount();
       if (this.state === 'idle' || this.state === 'focusing' || this.state === 'focused') {
         this.screenOS.setRevealed(true);
       }
@@ -261,11 +272,13 @@ export class DeskScene {
     await this.rig.flyTo(resolveFocusPose(def, anchor), 0.8);
     this.state = 'focused';
     if (inScene) {
-      // 就地阅读：点击交给书页 / 屏幕，不发 focusComplete（HTML 层不加背景虚化、不开面板）
+      // 就地阅读：点击交给书页 / 屏幕 / 抽屉物件，
+      // 不发 focusComplete（HTML 层不加背景虚化、不开面板）
       this.inSceneId = id;
-      this.interaction.mode = 'book';
+      this.interaction.mode = id === 'drawer' ? 'drawer' : 'book';
       if (id === 'notebook') this.bookRenderer?.setFocused(true);
       else if (id === 'monitor') this.screenOS?.setFocused(true);
+      else if (id === 'drawer') this.drawerItems?.setFocused(true);
       return;
     }
     const rect =
@@ -280,6 +293,7 @@ export class DeskScene {
     this.inSceneId = null;
     this.bookRenderer?.setFocused(false);
     this.screenOS?.setFocused(false);
+    this.drawerItems?.setFocused(false);
     this.hotspots.setDrawerOpen(false, () => this.audio.drawer());
 
     await this.rig.flyTo(HOME_POSE, 0.7);
@@ -346,6 +360,7 @@ export class DeskScene {
     this.resizeObserver?.disconnect();
     this.screenOS?.dispose();
     this.bookRenderer?.dispose();
+    this.drawerItems?.dispose();
     this.interaction?.dispose();
     this.manager?.dispose();
     this.bus.clear();

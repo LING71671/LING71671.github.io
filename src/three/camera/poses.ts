@@ -45,8 +45,8 @@ export const FOCUS_POSES: Partial<Record<HotspotId, FocusPoseDef>> = {
     // 就地阅读位姿：近乎正俯视，书页双跨充满画面（微前倾保留一点纸的立体感）。
     // 锚点是 notebook_root 包围盒中心（被文具拉偏），offset 内含 +x/-y 修正对准双页中心。
     anchor: NODES.notebookRoot,
-    offset: new THREE.Vector3(0.0745, 0.435, 0.1),
-    targetOffset: new THREE.Vector3(0.0745, -0.0148, 0),
+    offset: new THREE.Vector3(0.065, 0.435, 0.096),
+    targetOffset: new THREE.Vector3(0.065, -0.0148, 0),
     fov: 36,
   },
   monitor: {
