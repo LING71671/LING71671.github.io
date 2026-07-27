@@ -10,18 +10,23 @@ import { mkdir, writeFile } from 'node:fs/promises';
 const user = process.argv[2] ?? 'LING71671';
 const DAYS = 91; // 13 周
 
-/** 直接用 fetch 打公共 API（未认证 60 次/小时，构建脚本足够）；有 gh token 就带上提额度 */
+/** 用 GITHUB_TOKEN（CI）或 gh auth token（本地）认证；都没有就走未认证请求 */
 async function ghApi(path) {
   const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'desk-blog' };
-  try {
-    const token = execFileSync(
-      process.env.COMSPEC ?? 'cmd.exe',
-      ['/c', 'gh auth token'],
-      { encoding: 'utf8' },
-    ).trim();
-    if (token) headers.Authorization = `Bearer ${token}`;
-  } catch {
-    /* 未登录 gh 时走未认证请求 */
+  // CI 环境：GITHUB_TOKEN 自动注入
+  if (process.env.GITHUB_TOKEN) {
+    headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  } else {
+    try {
+      const token = execFileSync(
+        process.env.COMSPEC ?? 'cmd.exe',
+        ['/c', 'gh auth token'],
+        { encoding: 'utf8' },
+      ).trim();
+      if (token) headers.Authorization = `Bearer ${token}`;
+    } catch {
+      /* 未登录时走未认证请求 */
+    }
   }
   const res = await fetch(`https://api.github.com/${path}`, { headers });
   if (!res.ok) throw new Error(`${res.status} ${path}`);
