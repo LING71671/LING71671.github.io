@@ -103,7 +103,8 @@ export class DeskScene {
     // desk.glb 到位后重建热点命中盒并重放光照（灯泡/屏幕强度落到新材质）
     void this.deskReady.then(() => {
       this.hotspots.build();
-      this.lighting.snapTo({});
+      // 只重放当前光照到新材质，不重算 current（入口渐亮期间重算会覆盖 setEntryReveal）
+      this.lighting.reapplyValues();
       // 书页渲染器：把文章排版到笔记本书页上（就地阅读）
       this.bookRenderer = new BookRenderer(this.manager, this.registry);
       this.bookRenderer.onRequestExit = () => void this.unfocus();

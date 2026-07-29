@@ -171,6 +171,17 @@ export class LightingSystem {
     });
   }
 
+  /**
+   * 重放当前光照（不改变数值）：用于 GLTF 到位后让灯泡 / 屏幕 emissive
+   * 强度落到新材质上。入口校准渐亮期间 desk.glb 到位时若用 snapTo({}) 会
+   * 把 computeTarget 重算为 ENTRY 暗态，覆盖 setEntryReveal 的渐亮，造成
+   * 「突然变暗一个度」。这里只重放 applyValues + 阴影，保持 current 不变。
+   */
+  reapplyValues(): void {
+    this.applyValues(this.current);
+    this.updateShadowCasters();
+  }
+
   /** 立即应用状态（无过渡） */
   snapTo(next: Partial<LightingState>): void {
     this.state = { ...this.state, ...next };
