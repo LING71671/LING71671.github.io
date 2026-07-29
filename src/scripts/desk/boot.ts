@@ -214,10 +214,38 @@ async function run(): Promise<void> {
   api.on('contextlost', () => degrade());
 
   // 加载遮罩：assets:progress 驱动中心微光渐强；scene:ready（首帧已渲染）后淡出揭幕
+  // ?debug=load 开启加载调试：打时间戳日志 + 手动揭幕（不自动 lift）
+  const debugLoad = new URLSearchParams(location.search).has('debug', 'load');
+  const t0 = performance.now();
+  const log = (tag: string): void => {
+    if (!debugLoad) return;
+    const ms = Math.round(performance.now() - t0);
+    // 采样 canvas 中心像素，定位颜色来源
+    let avg = '';
+    try {
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        const d = ctx.getImageData(canvas.width / 2 - 5, canvas.height / 2 - 5, 10, 10).data;
+        let r = 0, g = 0, b = 0;
+        for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
+        const n = d.length / 4;
+        avg = ` canvas_avg=rgb(${Math.round(r / n)},${Math.round(g / n)},${Math.round(b / n)})`;
+      }
+    } catch { /* WebGL context 无法 getImageData，忽略 */ }
+    console.log(`[load] +${ms}ms ${tag}${avg}`);
+  };
+
   api.on('assets:progress', ({ loaded, total }) => {
+    log(`assets:progress ${loaded}/${total}`);
     if (curtainGlow) curtainGlow.style.opacity = String(0.4 + 0.6 * (loaded / total));
   });
   api.on('scene:ready', () => {
+    log('scene:ready');
+    if (debugLoad) {
+      // 调试模式：不自动揭幕，等手动 window.__desk.lift()
+      console.log('[load] 调试模式：遮罩未自动揭幕。手动揭幕：window.__desk.lift()');
+      return;
+    }
     // 让 3D 先渲染一帧，下一帧再揭幕，确保遮罩淡出时画面已就绪
     requestAnimationFrame(() => {
       curtain?.classList.add('lift');
@@ -274,6 +302,20 @@ async function run(): Promise<void> {
       },
       api,
     } as typeof window.__desk;
+  }
+
+  // 加载调试钩子（生产也可用，?debug=load 时暴露）
+  if (debugLoad) {
+    (window as unknown as { __deskLoad?: unknown }).__deskLoad = {
+      lift: () => {
+        console.log('[load] 手动揭幕');
+        curtain?.classList.add('lift');
+        curtain?.addEventListener('transitionend', () => curtain.remove(), { once: true });
+      },
+      removeCurtain: () => curtain?.remove(),
+      curtain,
+    };
+    console.log('[load] 调试模式已开启。window.__deskLoad.lift() 手动揭幕');
   }
 }
 
