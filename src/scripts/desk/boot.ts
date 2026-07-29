@@ -267,29 +267,28 @@ async function run(): Promise<void> {
 
   api.on('contextlost', () => degrade());
 
-  // 加载遮罩：assets:progress 驱动中心微光渐强；scene:ready（首帧已渲染）后淡出揭幕
+  // 加载遮罩：assets:progress 驱动中心微光渐强；
+  // 所有模型（clock.glb + desk.glb）都到位后才揭幕，避免揭幕后看到无墙面的 ENTRY 暗紫空场
+  let curtainLifted = false;
+  const liftCurtain = (): void => {
+    if (curtainLifted || !curtain || debugLoad) return;
+    curtainLifted = true;
+    curtain.classList.add('lift');
+    curtain.addEventListener('transitionend', () => curtain.remove(), { once: true });
+    window.setTimeout(() => curtain.remove(), 1200);
+  };
   api.on('assets:progress', ({ loaded, total }) => {
     log(`assets:progress ${loaded}/${total}`);
     if (curtainGlow) curtainGlow.style.opacity = String(0.4 + 0.6 * (loaded / total));
+    // 所有模型到位后才揭幕（此时墙面已填充，不会看到暗紫空场）
+    if (loaded >= total) liftCurtain();
   });
   api.on('scene:ready', () => {
-    // 用 DOM data 属性标记 scene:ready 是否触发（便于外部读取，不依赖 console）
     document.documentElement.setAttribute('data-scene-ready', '1');
-    console.log('[boot] scene:ready received');
     if (debugLoad) log('scene:ready');
-    if (debugLoad) {
-      console.log('[load] 调试模式：遮罩未自动揭幕。手动揭幕：window.__deskLoad.lift()');
-      return;
-    }
-    // 直接揭幕（不用 requestAnimationFrame，IAB 中 raf 可能被暂停导致回调丢失）
-    if (!curtain) {
-      document.documentElement.setAttribute('data-curtain-null', '1');
-      return;
-    }
-    curtain.classList.add('lift');
-    document.documentElement.setAttribute('data-curtain-lift', '1');
-    curtain.addEventListener('transitionend', () => curtain.remove(), { once: true });
-    window.setTimeout(() => curtain.remove(), 1200);
+    // skipEntry 路径会 await deskReady 后才 emit scene:ready，
+    // 此时模型已就绪，可以直接揭幕
+    if (skipEntry) liftCurtain();
   });
 
   // 主题（台灯档位）驱动 3D 光照 —— window.deskTheme 是唯一主题耦合点
