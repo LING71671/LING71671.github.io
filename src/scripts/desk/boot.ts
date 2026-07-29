@@ -340,26 +340,27 @@ async function run(): Promise<void> {
   // 加载调试钩子（生产也可用，?debug=load 时暴露）
   if (debugLoad) {
     log('boot:debug hooks ready');
-    (window as unknown as { __deskLoad?: unknown }).__deskLoad = {
-      lift: () => {
-        console.log('[load] 手动揭幕');
-        curtain?.classList.add('lift');
-        curtain?.addEventListener('transitionend', () => curtain.remove(), { once: true });
+    Object.assign(window, {
+      __deskLoad: {
+        lift: () => {
+          console.log('[load] 手动揭幕');
+          curtain?.classList.add('lift');
+          curtain?.addEventListener('transitionend', () => curtain.remove(), { once: true });
+        },
+        removeCurtain: () => curtain?.remove(),
+        sample: () => console.log(`[load] ${sampleCanvas()}`),
+        screenshot: () => {
+          const a = document.createElement('a');
+          a.download = `desk-${Date.now()}.png`;
+          a.href = canvas.toDataURL('image/png');
+          a.click();
+        },
+        curtain,
       },
-      removeCurtain: () => curtain?.remove(),
-      sample: () => console.log(`[load] ${sampleCanvas()}`),
-      screenshot: () => {
-        // 把 canvas 当前帧导出为图片下载（遮罩下的真实画面）
-        const a = document.createElement('a');
-        a.download = `desk-${Date.now()}.png`;
-        a.href = canvas.toDataURL('image/png');
-        a.click();
-      },
-      curtain,
-    };
+    });
     console.log('[load] 调试模式已开启。可用命令：');
     console.log('  __deskLoad.lift()      - 手动揭幕（观察遮罩下画面）');
-    console.log('  __deskLoad.sample()    - 采样当前 canvas 中心像素色');
+    console.log('  __deskLoad.sample()    - 采样当前 canvas 像素');
     console.log('  __deskLoad.screenshot()- 下载当前 canvas 截图');
     console.log('  __deskLoad.removeCurtain() - 移除遮罩');
   }
