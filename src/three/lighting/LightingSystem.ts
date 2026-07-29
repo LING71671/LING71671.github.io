@@ -47,6 +47,9 @@ export class LightingSystem {
   private current: LightingValues;
   private state: LightingState = { phase: 'entry', dayBlend: 1, lamp: 'ambient' };
 
+  /** 环境贴图就绪 Promise（init 在首帧前 await，避免 HDRI 替换造成可见突变） */
+  private envReady: Promise<void>;
+
   constructor(
     private manager: SceneManager,
     private registry: NodeRegistry,
@@ -84,22 +87,28 @@ export class LightingSystem {
     scene.add(this.clockFill);
 
     this.sky = new SkyWindow(scene);
-    this.setupEnvironment();
+    this.envReady = this.setupEnvironment();
 
     this.current = cloneValues(ENTRY);
     this.applyValues(this.current);
     this.updateShadowCasters();
   }
 
+  /** 首帧前等待 HDRI 就绪（preload 后命中缓存，趁白色期完成替换） */
+  awaitEnvironment(): Promise<void> {
+    return this.envReady;
+  }
+
   /**
    * 环境光照（金属/PBR 材质的反射来源）：
    * 先用 RoomEnvironment 立即可用，HDRI（CC0, Poly Haven artist_workshop）
    * 异步加载完成后替换，得到自然的室内反射与漫射。
+   * 返回 Promise：调用方在首帧前 await，让替换发生在画面出现前。
    */
-  private setupEnvironment(): void {
+  private setupEnvironment(): Promise<void> {
     const pmrem = new THREE.PMREMGenerator(this.manager.renderer);
     this.manager.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    new RGBELoader()
+    return new RGBELoader()
       .loadAsync(withBase('/env/artist_workshop_1k.hdr'))
       .then((hdr) => {
         const envMap = pmrem.fromEquirectangular(hdr).texture;

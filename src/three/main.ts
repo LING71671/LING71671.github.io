@@ -98,6 +98,11 @@ export class DeskScene {
     this.resizeObserver = new ResizeObserver(() => this.manager.resize());
     this.resizeObserver.observe(canvas);
     this.manager.resize();
+
+    // 趁首屏白色期等待 HDRI 就绪：preload 后命中缓存，PMREM 同步处理很快，
+    // 换来首帧已是最终环境贴图，消除 scene.environment 替换的可见突变
+    await this.lighting.awaitEnvironment();
+
     this.manager.start();
 
     // desk.glb 到位后重建热点命中盒并重放光照（灯泡/屏幕强度落到新材质）
