@@ -56,58 +56,6 @@ async function run(): Promise<void> {
   const canvas = $('desk-canvas') as HTMLCanvasElement | null;
   if (!canvas) return;
 
-  // 加载调试（?debug=load）：t0 取自页面开始，记录到 run() 执行的时间差
-  const debugLoad = new URLSearchParams(location.search).get('debug') === 'load';
-  const t0 = performance.now();
-  /** 用 WebGL readPixels 采样 canvas 多点平均色（中心+四角） */
-  const sampleCanvas = (): string => {
-    try {
-      const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
-      if (!gl) return ' (no gl)';
-      const w = canvas.width, h = canvas.height;
-      const sz = 8;
-      // 采样 5 个点：中心 + 四角
-      const points = [
-        [Math.floor(w/2-sz/2), Math.floor(h/2-sz/2)],     // 中心
-        [Math.floor(w*0.1), Math.floor(h*0.1)],              // 左上
-        [Math.floor(w*0.9-sz), Math.floor(h*0.1)],          // 右上
-        [Math.floor(w*0.1), Math.floor(h*0.9-sz)],          // 左下
-        [Math.floor(w*0.9-sz), Math.floor(h*0.9-sz)],       // 右下
-      ];
-      const labels = ['C', 'TL', 'TR', 'BL', 'BR'];
-      const parts: string[] = [];
-      for (let p = 0; p < points.length; p++) {
-        const px = new Uint8Array(sz * sz * 4);
-        gl.readPixels(points[p][0], points[p][1], sz, sz, gl.RGBA, gl.UNSIGNED_BYTE, px);
-        let r = 0, g = 0, b = 0;
-        for (let i = 0; i < px.length; i += 4) { r += px[i]; g += px[i + 1]; b += px[i + 2]; }
-        const n = px.length / 4;
-        parts.push(`${labels[p]}=rgb(${Math.round(r/n)},${Math.round(g/n)},${Math.round(b/n)})`);
-      }
-      return ' ' + parts.join(' ');
-    } catch {
-      return ' (readPixels failed)';
-    }
-  };
-  const log = (tag: string): void => {
-    if (!debugLoad) return;
-    const ms = Math.round(performance.now() - t0);
-    const line = `[load] +${ms}ms ${tag}${sampleCanvas()}`;
-    console.log(line);
-    // 存到全局数组 + DOM 隐藏元素，便于外部读取（自动化测试）
-    const arr = (window as unknown as { __deskLog?: string[] }).__deskLog ??= [];
-    arr.push(line);
-    const el = document.getElementById('debug-log') ?? (() => {
-      const d = document.createElement('pre');
-      d.id = 'debug-log';
-      d.style.cssText = 'position:fixed;bottom:0;left:0;z-index:9999;font:11px monospace;background:rgba(0,0,0,.9);color:#0f0;padding:8px;max-height:60vh;overflow:auto;white-space:pre-wrap;pointer-events:auto;';
-      document.body.appendChild(d);
-      return d;
-    })();
-    el.textContent += line + '\n';
-  };
-  if (debugLoad) console.log(`[load] +0ms boot:run`);
-
   // 刷新 → 重新体验入口（会话标记清除）
   const navEntry = performance.getEntriesByType('navigation')[0] as
     | PerformanceNavigationTiming
@@ -116,9 +64,7 @@ async function run(): Promise<void> {
 
   let mod: typeof import('../../three/main');
   try {
-    log('import:three/main');
     mod = await import('../../three/main');
-    log('import:done');
   } catch {
     degrade();
     return;
@@ -143,8 +89,6 @@ async function run(): Promise<void> {
   const entryFeedback = $('entry-feedback');
   const vignette = $('vignette');
   const muteBtn = $('mute-btn');
-  const curtain = $('load-curtain');
-  const curtainGlow = curtain?.querySelector<HTMLElement>('.curtain-glow');
 
   let toastTimer = 0;
   const showToast = (text: string, ms = 2600): void => {
@@ -267,35 +211,6 @@ async function run(): Promise<void> {
 
   api.on('contextlost', () => degrade());
 
-  // 加载遮罩：assets:progress 驱动中心微光渐强；
-  // 所有模型（clock.glb + desk.glb）都到位后才揭幕，避免揭幕后看到无墙面的 ENTRY 暗紫空场
-  let curtainLifted = false;
-  const liftCurtain = (): void => {
-    if (curtainLifted || !curtain || debugLoad) return;
-    curtainLifted = true;
-    curtain.classList.add('lift');
-    // 眼皮 transform 过渡完成后移除整个遮罩；setTimeout 兜底
-    curtain.addEventListener('transitionend', (e) => {
-      if (e.target instanceof HTMLElement && e.target.classList.contains('curtain-lid')) {
-        curtain.remove();
-      }
-    });
-    window.setTimeout(() => curtain.remove(), 1200);
-  };
-  api.on('assets:progress', ({ loaded, total }) => {
-    log(`assets:progress ${loaded}/${total}`);
-    if (curtainGlow) curtainGlow.style.opacity = String(0.4 + 0.6 * (loaded / total));
-    // 所有模型到位后才揭幕（此时墙面已填充，不会看到暗紫空场）
-    if (loaded >= total) liftCurtain();
-  });
-  api.on('scene:ready', () => {
-    document.documentElement.setAttribute('data-scene-ready', '1');
-    if (debugLoad) log('scene:ready');
-    // skipEntry 路径会 await deskReady 后才 emit scene:ready，
-    // 此时模型已就绪，可以直接揭幕
-    if (skipEntry) liftCurtain();
-  });
-
   // 主题（台灯档位）驱动 3D 光照 —— window.deskTheme 是唯一主题耦合点
   window.addEventListener('desk:theme', () => {
     const lamp = window.deskTheme?.getLamp() ?? 'ambient';
@@ -329,7 +244,6 @@ async function run(): Promise<void> {
       quality: detectQuality(),
       lamp: window.deskTheme?.getLamp() ?? 'ambient',
       muted: initialMuted,
-      onStage: debugLoad ? log : undefined,
     });
   } catch {
     degrade();
@@ -345,34 +259,6 @@ async function run(): Promise<void> {
       },
       api,
     } as typeof window.__desk;
-  }
-
-  // 加载调试钩子（生产也可用，?debug=load 时暴露）
-  if (debugLoad) {
-    log('boot:debug hooks ready');
-    Object.assign(window, {
-      __deskLoad: {
-        lift: () => {
-          console.log('[load] 手动揭幕');
-          curtain?.classList.add('lift');
-          curtain?.addEventListener('transitionend', () => curtain.remove(), { once: true });
-        },
-        removeCurtain: () => curtain?.remove(),
-        sample: () => console.log(`[load] ${sampleCanvas()}`),
-        screenshot: () => {
-          const a = document.createElement('a');
-          a.download = `desk-${Date.now()}.png`;
-          a.href = canvas.toDataURL('image/png');
-          a.click();
-        },
-        curtain,
-      },
-    });
-    console.log('[load] 调试模式已开启。可用命令：');
-    console.log('  __deskLoad.lift()      - 手动揭幕（观察遮罩下画面）');
-    console.log('  __deskLoad.sample()    - 采样当前 canvas 像素');
-    console.log('  __deskLoad.screenshot()- 下载当前 canvas 截图');
-    console.log('  __deskLoad.removeCurtain() - 移除遮罩');
   }
 }
 

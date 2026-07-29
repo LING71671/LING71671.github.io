@@ -27,13 +27,11 @@ export type AppState =
   | 'unfocusing';
 
 export interface InitOptions {
-  /** 会话内已完成校准 -> 直接进入主场景（产品逻辑自动管理，非用户可见跳过入口） */
+  /** 会话内已完成校准 → 直接进入主场景（产品逻辑自动管理，非用户可见跳过入口） */
   skipEntry?: boolean;
   quality?: QualityTier;
   lamp?: LampMode;
   muted?: boolean;
-  /** 加载阶段回调（调试用），收到各阶段标签与时间戳 */
-  onStage?: (tag: string) => void;
 }
 
 const sleep = (s: number) => new Promise<void>((r) => setTimeout(r, s * 1000));
@@ -54,8 +52,6 @@ export class DeskScene {
   private interaction!: InteractionManager;
   private state: AppState = 'loading';
   private resizeObserver: ResizeObserver | null = null;
-  /** 加载阶段回调（调试用） */
-  private onStage: ((tag: string) => void) | null = null;
   private bookRenderer: BookRenderer | null = null;
   private screenOS: ScreenOS | null = null;
   private drawerItems: DrawerItems | null = null;
@@ -65,23 +61,17 @@ export class DeskScene {
   private deskReady: Promise<void> = Promise.resolve();
 
   async init(canvas: HTMLCanvasElement, opts: InitOptions = {}): Promise<void> {
-    this.onStage = opts.onStage ?? null;
-    this.onStage?.('init:start');
     // canvas 尺寸就绪后再初始化（Astro 水合时机与布局竞态防护）
     await this.waitForSize(canvas);
-    this.onStage?.('canvas:sized');
 
     this.manager = new SceneManager(canvas);
     this.manager.onContextLost = () => this.bus.emit('contextlost');
     this.manager.setQuality(opts.quality ?? 'high');
-    this.onStage?.('renderer:created');
 
     await this.composeScene();
-    this.onStage?.('clock.glb:loaded');
 
     this.rig = new CameraRig(this.manager);
     this.lighting = new LightingSystem(this.manager, this.registry);
-    this.onStage?.('lighting:ready (HDRI async started)');
     this.clock = new ClockController(this.manager, this.registry, this.bus, this.audio);
     this.hotspots = new HotspotSystem(this.manager, this.registry, this.bus);
     this.hotspots.build();
@@ -96,7 +86,7 @@ export class DeskScene {
 
     this.audio.setMuted(opts.muted ?? true);
 
-    // 校准接近 -> 刻度渐亮 + 环境微亮（0-25% 预热）
+    // 校准接近 → 刻度渐亮 + 环境微亮（0-25% 预热）
     this.bus.on('clock:progress', ({ minutesOff }) => {
       const closeness = Math.max(0, 1 - minutesOff / 30);
       this.clock.setTickGlow(closeness);
@@ -110,11 +100,9 @@ export class DeskScene {
     this.manager.resize();
 
     this.manager.start();
-    this.onStage?.('renderer:start (FIRST FRAME RENDERED)');
 
     // desk.glb 到位后重建热点命中盒并重放光照（灯泡/屏幕强度落到新材质）
     void this.deskReady.then(() => {
-      this.onStage?.('desk.glb:loaded');
       this.hotspots.build();
       // 只重放当前光照到新材质，不重算 current（入口渐亮期间重算会覆盖 setEntryReveal）
       this.lighting.reapplyValues();
@@ -189,10 +177,8 @@ export class DeskScene {
     if (!forcePlaceholder) {
       // clock.glb 与 desk.glb 并行加载（网络已由 preload 并行，这里让 parse/decode 也并行）：
       // clock.glb 到位即首帧，desk.glb 后台并载填充墙面，缩短 ENTRY 暗紫空场期
-      this.onStage?.('loading:clock.glb+desk.glb (parallel)');
       const clockPromise = loader.load(withBase('/models/clock.glb'));
       this.deskReady = loader.load(withBase('/models/desk.glb')).then((deskScene) => {
-        this.onStage?.('desk.glb:parsed');
         if (deskScene) {
           AssetLoader.prepare(deskScene);
           this.manager.scene.add(deskScene);
@@ -201,7 +187,6 @@ export class DeskScene {
         this.bus.emit('assets:progress', { loaded: 2, total: 2 });
       });
       const clockScene = await clockPromise;
-      this.onStage?.('clock.glb:parsed');
       if (clockScene) {
         AssetLoader.prepare(clockScene);
         AssetLoader.ensureHandPivots(clockScene);
