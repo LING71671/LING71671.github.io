@@ -274,7 +274,10 @@ async function run(): Promise<void> {
     if (curtainLifted || !curtain || debugLoad) return;
     curtainLifted = true;
     curtain.classList.add('lift');
-    curtain.addEventListener('transitionend', () => curtain.remove(), { once: true });
+    // clip-path 过渡完成后移除；setTimeout 兜底
+    curtain.addEventListener('transitionend', (e) => {
+      if (e.target === curtain) curtain.remove();
+    }, { once: true });
     window.setTimeout(() => curtain.remove(), 1200);
   };
   api.on('assets:progress', ({ loaded, total }) => {

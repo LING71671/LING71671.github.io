@@ -33,7 +33,6 @@ export class SceneManager {
       antialias: true,
       alpha: false,
       powerPreference: 'high-performance',
-      preserveDrawingBuffer: true, // 调试：允许 readPixels 读到真实渲染画面
     });
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
