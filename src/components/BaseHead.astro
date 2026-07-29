@@ -55,8 +55,11 @@ const jsonLd =
 {/* 入口暗态画面靠 desk.glb 填充墙面：clock.glb（116K）串行 await 完成后才开下 desk.glb（3.1M），
     期间空场景透出 ENTRY 暗紫。在 HTML 阶段并行预加载两者，与 3D 的 JS chunk 下载重叠，
     desk.glb 到位越早，墙面填充越早，淡紫期越短 */}
+{/* HDRI（1.7M）异步加载完成后替换 scene.environment，PBR 反射会突变（视觉上「变暗一个度」）。
+    趁首屏白色时预加载，让替换发生在画面出现前，消除可见突变 */}
 <link rel="preload" as="fetch" href={withBase('/models/clock.glb')} fetchpriority="high" crossorigin="anonymous" />
 <link rel="preload" as="fetch" href={withBase('/models/desk.glb')} fetchpriority="high" crossorigin="anonymous" />
+<link rel="preload" as="fetch" href={withBase('/env/artist_workshop_1k.hdr')} fetchpriority="high" crossorigin="anonymous" />
 <link
   rel="alternate"
   type="application/rss+xml"
