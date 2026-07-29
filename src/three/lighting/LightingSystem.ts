@@ -47,8 +47,8 @@ export class LightingSystem {
   private current: LightingValues;
   private state: LightingState = { phase: 'entry', dayBlend: 1, lamp: 'ambient' };
 
-  /** 环境贴图就绪 Promise（init 在首帧前 await，避免 HDRI 替换造成可见突变） */
-  private envReady: Promise<void>;
+  /** 环境贴图强度乘数：HDRI 替换时用它柔化淡入淡出，掩盖 PBR 反射突变 */
+  private envDim = 1;
 
   constructor(
     private manager: SceneManager,
@@ -87,35 +87,61 @@ export class LightingSystem {
     scene.add(this.clockFill);
 
     this.sky = new SkyWindow(scene);
-    this.envReady = this.setupEnvironment();
+    this.setupEnvironment();
 
     this.current = cloneValues(ENTRY);
     this.applyValues(this.current);
     this.updateShadowCasters();
   }
 
-  /** 首帧前等待 HDRI 就绪（preload 后命中缓存，趁白色期完成替换） */
-  awaitEnvironment(): Promise<void> {
-    return this.envReady;
-  }
-
   /**
    * 环境光照（金属/PBR 材质的反射来源）：
    * 先用 RoomEnvironment 立即可用，HDRI（CC0, Poly Haven artist_workshop）
    * 异步加载完成后替换，得到自然的室内反射与漫射。
-   * 返回 Promise：调用方在首帧前 await，让替换发生在画面出现前。
+   * 替换时用 envDim 把 environmentIntensity 短暂压低再恢复（淡出->换图->淡入），
+   * 掩盖 RoomEnvironment->HDR 的 PBR 反射突变，无需阻塞首帧。
    */
-  private setupEnvironment(): Promise<void> {
+  private setupEnvironment(): void {
     const pmrem = new THREE.PMREMGenerator(this.manager.renderer);
-    this.manager.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    return new RGBELoader()
+    const scene = this.manager.scene;
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    new RGBELoader()
       .loadAsync(withBase('/env/artist_workshop_1k.hdr'))
       .then((hdr) => {
         const envMap = pmrem.fromEquirectangular(hdr).texture;
         hdr.dispose();
-        this.manager.scene.environment = envMap;
         pmrem.dispose();
-        this.manager.invalidate();
+        // 柔化过渡：淡出反射 -> 换贴图 -> 淡入新反射
+        const apply = (): void => {
+          scene.environmentIntensity = this.current.envI * this.envDim;
+          this.manager.invalidate();
+        };
+        this.manager.tweens.run({
+          duration: 0.25,
+          ease: easeInOutCubic,
+          onUpdate: (t) => {
+            this.envDim = 1 - t;
+            apply();
+          },
+          onComplete: () => {
+            // 反射最弱时换贴图（此时替换无感）
+            this.envDim = 0;
+            scene.environment = envMap;
+            apply();
+            this.manager.tweens.run({
+              duration: 0.25,
+              ease: easeInOutCubic,
+              onUpdate: (t) => {
+                this.envDim = t;
+                apply();
+              },
+              onComplete: () => {
+                this.envDim = 1;
+                apply();
+              },
+            });
+          },
+        });
       })
       .catch(() => {
         pmrem.dispose(); // HDRI 加载失败时保留 RoomEnvironment
@@ -217,7 +243,7 @@ export class LightingSystem {
     this.lampSpot.color.copy(v.lampColor);
     this.clockFill.intensity = v.clockFillI;
     this.manager.renderer.toneMappingExposure = v.exposure;
-    this.manager.scene.environmentIntensity = v.envI;
+    this.manager.scene.environmentIntensity = v.envI * this.envDim;
     this.sky.setBlend(v.skyBlend);
 
     // 窗外照片按昼夜调色：白天原色，夜里压成冷蓝的暗景。
