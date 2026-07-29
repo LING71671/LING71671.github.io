@@ -319,12 +319,14 @@ export class BookRenderer {
 
     this.buildGuard();
 
-    // 初始：空白纸面（颜色与页面一致，远看无感）
+    // 初始：先落空白纸面（与页面同色），再惰性拉取目录预渲染到书页上
     this.drawPage(this.canvasL, null, 'left', null);
     this.drawPage(this.canvasR, null, 'right', null);
     this.commitTextures();
     this.ready = true;
     this.manager.invalidate();
+    // 场景就绪即预渲染目录：未聚焦时笔记本也带着文字（prepare 有幂等保护，聚焦时不会重复加载）
+    void this.prepare();
   }
 
   /** 首次聚焦前调用：拉取目录并绘制（相机 0.8s 飞行时间内通常可完成） */
