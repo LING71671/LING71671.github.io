@@ -281,20 +281,15 @@ async function run(): Promise<void> {
       console.log('[load] 调试模式：遮罩未自动揭幕。手动揭幕：window.__deskLoad.lift()');
       return;
     }
-    // 让 3D 先渲染一帧，下一帧再揭幕，确保遮罩淡出时画面已就绪
-    requestAnimationFrame(() => {
-      if (!curtain) {
-        console.error('[boot] curtain is null at scene:ready!');
-        document.documentElement.setAttribute('data-curtain-null', '1');
-        return;
-      }
-      console.log('[boot] adding lift class to curtain');
-      curtain.classList.add('lift');
-      document.documentElement.setAttribute('data-curtain-lift', '1');
-      // 淡出完成后移除 DOM；用 setTimeout 兜底，不依赖 transitionend
-      curtain.addEventListener('transitionend', () => curtain.remove(), { once: true });
-      window.setTimeout(() => curtain.remove(), 1200);
-    });
+    // 直接揭幕（不用 requestAnimationFrame，IAB 中 raf 可能被暂停导致回调丢失）
+    if (!curtain) {
+      document.documentElement.setAttribute('data-curtain-null', '1');
+      return;
+    }
+    curtain.classList.add('lift');
+    document.documentElement.setAttribute('data-curtain-lift', '1');
+    curtain.addEventListener('transitionend', () => curtain.remove(), { once: true });
+    window.setTimeout(() => curtain.remove(), 1200);
   });
 
   // 主题（台灯档位）驱动 3D 光照 —— window.deskTheme 是唯一主题耦合点
