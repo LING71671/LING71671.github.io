@@ -56,6 +56,36 @@ async function run(): Promise<void> {
   const canvas = $('desk-canvas') as HTMLCanvasElement | null;
   if (!canvas) return;
 
+  // 加载调试（?debug=load）：t0 取自页面开始，记录到 run() 执行的时间差
+  const debugLoad = new URLSearchParams(location.search).has('debug', 'load');
+  const t0 = performance.now();
+  /** 用 WebGL readPixels 采样 canvas 中心区域平均色 */
+  const sampleCanvas = (): string => {
+    try {
+      const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+      if (!gl) return ' (no gl)';
+      const w = canvas.width, h = canvas.height;
+      const sz = 10;
+      const px = new Uint8Array(sz * sz * 4);
+      gl.readPixels(
+        Math.floor(w / 2 - sz / 2), Math.floor(h / 2 - sz / 2), sz, sz,
+        gl.RGBA, gl.UNSIGNED_BYTE, px,
+      );
+      let r = 0, g = 0, b = 0;
+      for (let i = 0; i < px.length; i += 4) { r += px[i]; g += px[i + 1]; b += px[i + 2]; }
+      const n = px.length / 4;
+      return ` canvas=rgb(${Math.round(r / n)},${Math.round(g / n)},${Math.round(b / n)})`;
+    } catch {
+      return ' (readPixels failed)';
+    }
+  };
+  const log = (tag: string): void => {
+    if (!debugLoad) return;
+    const ms = Math.round(performance.now() - t0);
+    console.log(`[load] +${ms}ms ${tag}${sampleCanvas()}`);
+  };
+  if (debugLoad) console.log(`[load] +0ms boot:run`);
+
   // 刷新 → 重新体验入口（会话标记清除）
   const navEntry = performance.getEntriesByType('navigation')[0] as
     | PerformanceNavigationTiming
@@ -64,7 +94,9 @@ async function run(): Promise<void> {
 
   let mod: typeof import('../../three/main');
   try {
+    log('import:three/main');
     mod = await import('../../three/main');
+    log('import:done');
   } catch {
     degrade();
     return;
@@ -214,27 +246,6 @@ async function run(): Promise<void> {
   api.on('contextlost', () => degrade());
 
   // 加载遮罩：assets:progress 驱动中心微光渐强；scene:ready（首帧已渲染）后淡出揭幕
-  // ?debug=load 开启加载调试：打时间戳日志 + 手动揭幕（不自动 lift）
-  const debugLoad = new URLSearchParams(location.search).has('debug', 'load');
-  const t0 = performance.now();
-  const log = (tag: string): void => {
-    if (!debugLoad) return;
-    const ms = Math.round(performance.now() - t0);
-    // 采样 canvas 中心像素，定位颜色来源
-    let avg = '';
-    try {
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        const d = ctx.getImageData(canvas.width / 2 - 5, canvas.height / 2 - 5, 10, 10).data;
-        let r = 0, g = 0, b = 0;
-        for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
-        const n = d.length / 4;
-        avg = ` canvas_avg=rgb(${Math.round(r / n)},${Math.round(g / n)},${Math.round(b / n)})`;
-      }
-    } catch { /* WebGL context 无法 getImageData，忽略 */ }
-    console.log(`[load] +${ms}ms ${tag}${avg}`);
-  };
-
   api.on('assets:progress', ({ loaded, total }) => {
     log(`assets:progress ${loaded}/${total}`);
     if (curtainGlow) curtainGlow.style.opacity = String(0.4 + 0.6 * (loaded / total));
@@ -242,8 +253,7 @@ async function run(): Promise<void> {
   api.on('scene:ready', () => {
     log('scene:ready');
     if (debugLoad) {
-      // 调试模式：不自动揭幕，等手动 window.__desk.lift()
-      console.log('[load] 调试模式：遮罩未自动揭幕。手动揭幕：window.__desk.lift()');
+      console.log('[load] 调试模式：遮罩未自动揭幕。手动揭幕：window.__deskLoad.lift()');
       return;
     }
     // 让 3D 先渲染一帧，下一帧再揭幕，确保遮罩淡出时画面已就绪
@@ -287,6 +297,7 @@ async function run(): Promise<void> {
       quality: detectQuality(),
       lamp: window.deskTheme?.getLamp() ?? 'ambient',
       muted: initialMuted,
+      onStage: debugLoad ? log : undefined,
     });
   } catch {
     degrade();
@@ -313,9 +324,21 @@ async function run(): Promise<void> {
         curtain?.addEventListener('transitionend', () => curtain.remove(), { once: true });
       },
       removeCurtain: () => curtain?.remove(),
+      sample: () => console.log(`[load] ${sampleCanvas()}`),
+      screenshot: () => {
+        // 把 canvas 当前帧导出为图片下载（遮罩下的真实画面）
+        const a = document.createElement('a');
+        a.download = `desk-${Date.now()}.png`;
+        a.href = canvas.toDataURL('image/png');
+        a.click();
+      },
       curtain,
     };
-    console.log('[load] 调试模式已开启。window.__deskLoad.lift() 手动揭幕');
+    console.log('[load] 调试模式已开启。可用命令：');
+    console.log('  __deskLoad.lift()      - 手动揭幕（观察遮罩下画面）');
+    console.log('  __deskLoad.sample()    - 采样当前 canvas 中心像素色');
+    console.log('  __deskLoad.screenshot()- 下载当前 canvas 截图');
+    console.log('  __deskLoad.removeCurtain() - 移除遮罩');
   }
 }
 
