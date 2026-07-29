@@ -57,7 +57,7 @@ async function run(): Promise<void> {
   if (!canvas) return;
 
   // 加载调试（?debug=load）：t0 取自页面开始，记录到 run() 执行的时间差
-  const debugLoad = new URLSearchParams(location.search).has('debug', 'load');
+  const debugLoad = new URLSearchParams(location.search).get('debug') === 'load';
   const t0 = performance.now();
   /** 用 WebGL readPixels 采样 canvas 中心区域平均色 */
   const sampleCanvas = (): string => {
@@ -84,9 +84,17 @@ async function run(): Promise<void> {
     const ms = Math.round(performance.now() - t0);
     const line = `[load] +${ms}ms ${tag}${sampleCanvas()}`;
     console.log(line);
-    // 存到全局数组，便于外部读取（自动化测试）
+    // 存到全局数组 + DOM 隐藏元素，便于外部读取（自动化测试）
     const arr = (window as unknown as { __deskLog?: string[] }).__deskLog ??= [];
     arr.push(line);
+    const el = document.getElementById('debug-log') ?? (() => {
+      const d = document.createElement('pre');
+      d.id = 'debug-log';
+      d.style.cssText = 'position:fixed;bottom:0;left:0;z-index:9999;font:11px monospace;background:rgba(0,0,0,.9);color:#0f0;padding:8px;max-height:60vh;overflow:auto;white-space:pre-wrap;pointer-events:auto;';
+      document.body.appendChild(d);
+      return d;
+    })();
+    el.textContent += line + '\n';
   };
   if (debugLoad) console.log(`[load] +0ms boot:run`);
 
