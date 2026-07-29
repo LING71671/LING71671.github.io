@@ -89,6 +89,8 @@ async function run(): Promise<void> {
   const entryFeedback = $('entry-feedback');
   const vignette = $('vignette');
   const muteBtn = $('mute-btn');
+  const curtain = $('load-curtain');
+  const curtainGlow = curtain?.querySelector<HTMLElement>('.curtain-glow');
 
   let toastTimer = 0;
   const showToast = (text: string, ms = 2600): void => {
@@ -210,6 +212,19 @@ async function run(): Promise<void> {
   api.on('camera:unfocusComplete', () => canvas.classList.remove('blurred'));
 
   api.on('contextlost', () => degrade());
+
+  // 加载遮罩：assets:progress 驱动中心微光渐强；scene:ready（首帧已渲染）后淡出揭幕
+  api.on('assets:progress', ({ loaded, total }) => {
+    if (curtainGlow) curtainGlow.style.opacity = String(0.4 + 0.6 * (loaded / total));
+  });
+  api.on('scene:ready', () => {
+    // 让 3D 先渲染一帧，下一帧再揭幕，确保遮罩淡出时画面已就绪
+    requestAnimationFrame(() => {
+      curtain?.classList.add('lift');
+      // 淡出完成后移除 DOM，避免残留遮罩拦截后续交互
+      curtain?.addEventListener('transitionend', () => curtain.remove(), { once: true });
+    });
+  });
 
   // 主题（台灯档位）驱动 3D 光照 —— window.deskTheme 是唯一主题耦合点
   window.addEventListener('desk:theme', () => {

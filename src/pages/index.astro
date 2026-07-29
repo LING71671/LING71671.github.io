@@ -68,6 +68,10 @@ const latest = publishedPosts(await getCollection('posts')).slice(0, 3);
 
   {/* —— 3D 书桌 —— */}
   <div id="desk-root">
+    {/* 加载遮罩：掩盖 clock.glb 解析前的黄/紫空场，scene:ready 后淡出切入 ENTRY 暗态 */}
+    <div id="load-curtain" aria-hidden="true">
+      <div class="curtain-glow"></div>
+    </div>
     <canvas id="desk-canvas"></canvas>
     {/* CSS3D 屏幕系统层（ScreenOS 把 DOM 桌面贴进 3D 显示器；未聚焦时不拦截指针） */}
     <div id="screen-os-layer" aria-hidden="true"></div>
@@ -250,6 +254,53 @@ const latest = publishedPosts(await getCollection('posts')).slice(0, 3);
   #desk-canvas.blurred {
     filter: blur(9px) brightness(0.88);
     transform: scale(1.02);
+  }
+
+  /* 加载遮罩：暗底与 ENTRY 暗态同源，中心微光呼吸呼应时钟亮起 */
+  #load-curtain {
+    position: absolute;
+    inset: 0;
+    z-index: 6;
+    pointer-events: none;
+    background: #0e0a06;
+    opacity: 1;
+    transition: opacity 0.8s var(--ease-out);
+  }
+
+  #load-curtain.lift {
+    opacity: 0;
+  }
+
+  .curtain-glow {
+    position: absolute;
+    left: 42%;
+    top: 46%;
+    width: 30vmin;
+    height: 30vmin;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: radial-gradient(
+      circle,
+      rgb(200 160 92 / 0.18) 0%,
+      transparent 70%
+    );
+    animation: curtain-breathe 3s ease-in-out infinite;
+  }
+
+  @keyframes curtain-breathe {
+    50% {
+      opacity: 0.6;
+      transform: translate(-50%, -50%) scale(1.08);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .curtain-glow {
+      animation: none;
+    }
+    #load-curtain {
+      transition-duration: 1ms;
+    }
   }
 
   /* —— CSS3D 屏幕系统层：canvas 之上、HUD 之下 —— */
