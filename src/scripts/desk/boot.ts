@@ -273,14 +273,20 @@ async function run(): Promise<void> {
     if (curtainGlow) curtainGlow.style.opacity = String(0.4 + 0.6 * (loaded / total));
   });
   api.on('scene:ready', () => {
-    log('scene:ready');
+    // 非 debug 也打这行，确认事件是否触发
+    console.log('[boot] scene:ready received');
+    if (debugLoad) log('scene:ready');
     if (debugLoad) {
       console.log('[load] 调试模式：遮罩未自动揭幕。手动揭幕：window.__deskLoad.lift()');
       return;
     }
     // 让 3D 先渲染一帧，下一帧再揭幕，确保遮罩淡出时画面已就绪
     requestAnimationFrame(() => {
-      if (!curtain) return;
+      if (!curtain) {
+        console.error('[boot] curtain is null at scene:ready!');
+        return;
+      }
+      console.log('[boot] adding lift class to curtain');
       curtain.classList.add('lift');
       // 淡出完成后移除 DOM；用 setTimeout 兜底，不依赖 transitionend
       curtain.addEventListener('transitionend', () => curtain.remove(), { once: true });
