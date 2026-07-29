@@ -273,7 +273,8 @@ async function run(): Promise<void> {
     if (curtainGlow) curtainGlow.style.opacity = String(0.4 + 0.6 * (loaded / total));
   });
   api.on('scene:ready', () => {
-    // 非 debug 也打这行，确认事件是否触发
+    // 用 DOM data 属性标记 scene:ready 是否触发（便于外部读取，不依赖 console）
+    document.documentElement.setAttribute('data-scene-ready', '1');
     console.log('[boot] scene:ready received');
     if (debugLoad) log('scene:ready');
     if (debugLoad) {
@@ -284,10 +285,12 @@ async function run(): Promise<void> {
     requestAnimationFrame(() => {
       if (!curtain) {
         console.error('[boot] curtain is null at scene:ready!');
+        document.documentElement.setAttribute('data-curtain-null', '1');
         return;
       }
       console.log('[boot] adding lift class to curtain');
       curtain.classList.add('lift');
+      document.documentElement.setAttribute('data-curtain-lift', '1');
       // 淡出完成后移除 DOM；用 setTimeout 兜底，不依赖 transitionend
       curtain.addEventListener('transitionend', () => curtain.remove(), { once: true });
       window.setTimeout(() => curtain.remove(), 1200);
