@@ -175,7 +175,18 @@ export class DeskScene {
     const loader = new AssetLoader();
 
     if (!forcePlaceholder) {
-      const clockScene = await loader.load(withBase('/models/clock.glb'));
+      // clock.glb 与 desk.glb 并行加载（网络已由 preload 并行，这里让 parse/decode 也并行）：
+      // clock.glb 到位即首帧，desk.glb 后台并载填充墙面，缩短 ENTRY 暗紫空场期
+      const clockPromise = loader.load(withBase('/models/clock.glb'));
+      this.deskReady = loader.load(withBase('/models/desk.glb')).then((deskScene) => {
+        if (deskScene) {
+          AssetLoader.prepare(deskScene);
+          this.manager.scene.add(deskScene);
+          this.registry.resolve(this.manager.scene);
+        }
+        this.bus.emit('assets:progress', { loaded: 2, total: 2 });
+      });
+      const clockScene = await clockPromise;
       if (clockScene) {
         AssetLoader.prepare(clockScene);
         AssetLoader.ensureHandPivots(clockScene);
@@ -183,15 +194,6 @@ export class DeskScene {
         this.manager.scene.add(clockScene);
         this.registry.resolve(this.manager.scene);
         this.bus.emit('assets:progress', { loaded: 1, total: 2 });
-        // 书桌在入口时钟交互期间后台并载；加载被仪式感吸收
-        this.deskReady = loader.load(withBase('/models/desk.glb')).then((deskScene) => {
-          if (deskScene) {
-            AssetLoader.prepare(deskScene);
-            this.manager.scene.add(deskScene);
-            this.registry.resolve(this.manager.scene);
-          }
-          this.bus.emit('assets:progress', { loaded: 2, total: 2 });
-        });
         return;
       }
     }
