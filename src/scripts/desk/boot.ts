@@ -82,7 +82,11 @@ async function run(): Promise<void> {
   const log = (tag: string): void => {
     if (!debugLoad) return;
     const ms = Math.round(performance.now() - t0);
-    console.log(`[load] +${ms}ms ${tag}${sampleCanvas()}`);
+    const line = `[load] +${ms}ms ${tag}${sampleCanvas()}`;
+    console.log(line);
+    // 存到全局数组，便于外部读取（自动化测试）
+    const arr = (window as unknown as { __deskLog?: string[] }).__deskLog ??= [];
+    arr.push(line);
   };
   if (debugLoad) console.log(`[load] +0ms boot:run`);
 
