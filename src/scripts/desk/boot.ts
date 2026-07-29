@@ -274,10 +274,12 @@ async function run(): Promise<void> {
     if (curtainLifted || !curtain || debugLoad) return;
     curtainLifted = true;
     curtain.classList.add('lift');
-    // clip-path 过渡完成后移除；setTimeout 兜底
+    // 眼皮 transform 过渡完成后移除整个遮罩；setTimeout 兜底
     curtain.addEventListener('transitionend', (e) => {
-      if (e.target === curtain) curtain.remove();
-    }, { once: true });
+      if (e.target instanceof HTMLElement && e.target.classList.contains('curtain-lid')) {
+        curtain.remove();
+      }
+    });
     window.setTimeout(() => curtain.remove(), 1200);
   };
   api.on('assets:progress', ({ loaded, total }) => {

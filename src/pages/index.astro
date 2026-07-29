@@ -68,8 +68,10 @@ const latest = publishedPosts(await getCollection('posts')).slice(0, 3);
 
   {/* —— 3D 书桌 —— */}
   <div id="desk-root">
-    {/* 加载遮罩：掩盖 clock.glb 解析前的黄/紫空场，scene:ready 后淡出切入 ENTRY 暗态 */}
+    {/* 加载遮罩：上下两片眼皮，揭幕时相向退开（眨眼睁开），掩盖资源加载期 */}
     <div id="load-curtain" aria-hidden="true">
+      <div class="curtain-lid curtain-lid--top"></div>
+      <div class="curtain-lid curtain-lid--bottom"></div>
       <div class="curtain-glow"></div>
     </div>
     <canvas id="desk-canvas"></canvas>
@@ -256,20 +258,39 @@ const latest = publishedPosts(await getCollection('posts')).slice(0, 3);
     transform: scale(1.02);
   }
 
-  /* 加载遮罩：暗底与 ENTRY 暗态同源，中心微光呼吸呼应时钟亮起 */
-  /* 揭幕用 clip-path 从中间一条缝向上下张开（眨眼睁开），比 opacity 淡出更自然 */
+  /* 加载遮罩：上下两片眼皮，揭幕时相向退开（眨眼睁开） */
   #load-curtain {
     position: absolute;
     inset: 0;
     z-index: 6;
     pointer-events: none;
-    background: #0e0a06;
-    clip-path: inset(0 0 0 0);
-    transition: clip-path 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+    overflow: hidden;
   }
 
-  #load-curtain.lift {
-    clip-path: inset(49% 0 49% 0);
+  /* 眼皮：上下各占一半，弧形边缘模拟眼形 */
+  .curtain-lid {
+    position: absolute;
+    left: 0;
+    width: 100%;
+    height: 51%;
+    background: #0e0a06;
+    transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1); /* easeOutExpo：减速张开 */
+  }
+  .curtain-lid--top {
+    top: 0;
+    border-radius: 0 0 50% 50% / 0 0 80% 80%; /* 下缘弧形 */
+  }
+  .curtain-lid--bottom {
+    bottom: 0;
+    border-radius: 50% 50% 0 0 / 80% 80% 0 0; /* 上缘弧形 */
+  }
+
+  /* 揭幕：上眼皮向上退、下眼皮向下退，露出画面 */
+  #load-curtain.lift .curtain-lid--top {
+    transform: translateY(-101%);
+  }
+  #load-curtain.lift .curtain-lid--bottom {
+    transform: translateY(101%);
   }
 
   .curtain-glow {
@@ -286,7 +307,7 @@ const latest = publishedPosts(await getCollection('posts')).slice(0, 3);
       transparent 70%
     );
     animation: curtain-breathe 3s ease-in-out infinite;
-    transition: opacity 0.4s ease-out;
+    transition: opacity 0.3s ease-out;
   }
 
   #load-curtain.lift .curtain-glow {
@@ -304,13 +325,13 @@ const latest = publishedPosts(await getCollection('posts')).slice(0, 3);
     .curtain-glow {
       animation: none;
     }
-    #load-curtain {
+    .curtain-lid {
       transition: opacity 0.3s ease;
-      clip-path: none;
     }
-    #load-curtain.lift {
+    #load-curtain.lift .curtain-lid--top,
+    #load-curtain.lift .curtain-lid--bottom {
+      transform: none;
       opacity: 0;
-      clip-path: none;
     }
   }
 
