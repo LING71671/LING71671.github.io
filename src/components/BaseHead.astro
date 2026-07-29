@@ -52,6 +52,9 @@ const jsonLd =
 <meta name="description" content={description} />
 <link rel="canonical" href={canonical} />
 <link rel="icon" type="image/svg+xml" href={withBase('/favicon.svg')} />
+{/* 入口首帧依赖 clock.glb：在 HTML 阶段预加载，与 3D 的 JS chunk 下载并行，
+    避免 await composeScene() 串行等待网络，缩短淡紫空白期 */}
+<link rel="preload" as="fetch" href={withBase('/models/clock.glb')} fetchpriority="high" crossorigin="anonymous" />
 <link
   rel="alternate"
   type="application/rss+xml"
