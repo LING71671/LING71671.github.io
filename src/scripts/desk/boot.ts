@@ -280,9 +280,11 @@ async function run(): Promise<void> {
     }
     // 让 3D 先渲染一帧，下一帧再揭幕，确保遮罩淡出时画面已就绪
     requestAnimationFrame(() => {
-      curtain?.classList.add('lift');
-      // 淡出完成后移除 DOM，避免残留遮罩拦截后续交互
-      curtain?.addEventListener('transitionend', () => curtain.remove(), { once: true });
+      if (!curtain) return;
+      curtain.classList.add('lift');
+      // 淡出完成后移除 DOM；用 setTimeout 兜底，不依赖 transitionend
+      curtain.addEventListener('transitionend', () => curtain.remove(), { once: true });
+      window.setTimeout(() => curtain.remove(), 1200);
     });
   });
 
