@@ -161,11 +161,15 @@ async function run(): Promise<void> {
       return;
     }
     if (id === 'window') {
-      const now = new Date();
-      const hh = String(now.getHours()).padStart(2, '0');
-      const mm = String(now.getMinutes()).padStart(2, '0');
-      const phase = now.getHours() >= 6 && now.getHours() < 18 ? '白天' : '夜晚';
-      showToast(`现在是 ${hh}:${mm} · 窗外是${phase}`);
+      void (async () => {
+        const drawn = await api.toggleCurtain();
+        const now = new Date();
+        const phase = now.getHours() >= 6 && now.getHours() < 18 ? '白天' : '夜晚';
+        const msg = drawn
+          ? '已拉上窗帘 · 室内光线调柔'
+          : `已拉开窗帘 · 窗外是${phase}`;
+        showToast(msg);
+      })();
       return;
     }
     void router.openHotspot(id);

@@ -96,7 +96,7 @@ export const HOTSPOTS: Record<HotspotId, HotspotDef> = {
   window: {
     id: 'window',
     label: '窗户',
-    hint: '时间与氛围',
+    hint: '拉上 / 拉开窗帘',
     behavior: 'ambient-info',
   },
 };

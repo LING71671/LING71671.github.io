@@ -122,4 +122,46 @@ export class AudioManager {
     src.start(t0);
     src.stop(t0 + dur);
   }
+
+  /**
+   * 窗帘拉动：带通滤波白噪声 + 柔和包络，模拟亚麻布料滑过罗马杆的「沙沙」声。
+   */
+  curtain(drawn: boolean): void {
+    if (this.muted || !this.ctx || !this.master) return;
+    if (this.ctx.state !== 'running') return;
+    const ctx = this.ctx;
+    const t0 = ctx.currentTime;
+    const dur = 0.48;
+    const len = Math.max(1, Math.floor(ctx.sampleRate * dur));
+    const buffer = ctx.createBuffer(1, len, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+
+    for (let i = 0; i < len; i++) {
+      const p = i / len;
+      // 升降平滑包络（钟形 + 后段微拖尾）
+      const env = Math.sin(p * Math.PI) * 0.7 + (1 - p) * 0.3 * Math.sin(p * Math.PI * 0.5);
+      data[i] = (Math.random() * 2 - 1) * env;
+    }
+
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+
+    const band = ctx.createBiquadFilter();
+    band.type = 'bandpass';
+    band.Q.value = 1.2;
+
+    const startFreq = drawn ? 1800 : 1200;
+    const endFreq = drawn ? 1100 : 2200;
+    band.frequency.setValueAtTime(startFreq, t0);
+    band.frequency.exponentialRampToValueAtTime(endFreq, t0 + dur);
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.001, t0);
+    gain.gain.linearRampToValueAtTime(0.065, t0 + 0.1);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+
+    src.connect(band).connect(gain).connect(this.master);
+    src.start(t0);
+    src.stop(t0 + dur);
+  }
 }

@@ -7,3 +7,4 @@ dist/
 .env
 .env.*
 public/models/*.raw.glb
+.reasonix/

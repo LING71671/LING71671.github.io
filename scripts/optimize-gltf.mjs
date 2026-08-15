@@ -31,6 +31,14 @@ for (const file of files) {
       shell: process.platform === 'win32',
     });
 
+  const tryRun = (args) => {
+    try {
+      run(args);
+    } catch (e) {
+      console.warn(`[warn] gltf-transform ${args[0]} skipped:`, e.message);
+    }
+  };
+
   // 1) 清理：去重 + 剪枝（保留顶点属性 —— 屏幕贴图运行时才注入，UV 不能剪）
   run(['dedup', path, path]);
   run(['prune', path, path, '--keep-attributes', 'true']);
@@ -38,17 +46,17 @@ for (const file of files) {
   // 2) 贴图：缩到 512 并转 WebP（CC0 模型自带 1k 贴图，体积占大头；
   //    three.js 原生支持 WebP，无需额外解码器）
   //    窗外实景是画面里唯一的大面积「照片」，缩到 512 会糊，单独保留 1024。
-  run([
+  tryRun([
     'resize', path, path,
     '--width', '512', '--height', '512',
     '--pattern', '!(*window_view*)',
   ]);
-  run([
+  tryRun([
     'resize', path, path,
     '--width', '1024', '--height', '1024',
     '--pattern', '*window_view*',
   ]);
-  run(['webp', path, path, '--quality', '82']);
+  tryRun(['webp', path, path, '--quality', '82']);
 
   // 3) 量化：法线/UV 提高到 12/14 位。默认 8 位法线会在平整纸面上
   //    与环境贴图反射叠出可见的三角形条纹（斜纹伪影），必须提精度。

@@ -13,6 +13,7 @@ import { AssetLoader } from './core/AssetLoader';
 import { BookRenderer } from './content/BookRenderer';
 import { ScreenOS } from './content/ScreenOS';
 import { DrawerItems } from './content/DrawerItems';
+import { CurtainController } from './interaction/CurtainController';
 import { withBase } from '../lib/url';
 import { HOTSPOTS, type HotspotId } from '../lib/hotspots';
 import type { QualityTier } from '../scripts/desk/storage';
@@ -50,6 +51,7 @@ export class DeskScene {
   private clock!: ClockController;
   private hotspots!: HotspotSystem;
   private interaction!: InteractionManager;
+  private curtain!: CurtainController;
   private state: AppState = 'loading';
   private resizeObserver: ResizeObserver | null = null;
   private bookRenderer: BookRenderer | null = null;
@@ -72,6 +74,12 @@ export class DeskScene {
 
     this.rig = new CameraRig(this.manager);
     this.lighting = new LightingSystem(this.manager, this.registry);
+    this.curtain = new CurtainController(
+      this.manager,
+      this.registry,
+      this.audio,
+      this.lighting,
+    );
     this.clock = new ClockController(this.manager, this.registry, this.bus, this.audio);
     this.hotspots = new HotspotSystem(this.manager, this.registry, this.bus);
     this.hotspots.build();
@@ -106,6 +114,7 @@ export class DeskScene {
       this.hotspots.build();
       // 只重放当前光照到新材质，不重算 current（入口渐亮期间重算会覆盖 setEntryReveal）
       this.lighting.reapplyValues();
+      this.curtain.mount();
       // 书页渲染器：把文章排版到笔记本书页上（就地阅读）
       this.bookRenderer = new BookRenderer(this.manager, this.registry);
       this.bookRenderer.onRequestExit = () => void this.unfocus();
@@ -351,6 +360,20 @@ export class DeskScene {
   /** GLTF 换模验收工具 */
   validateContract(): string[] {
     return this.registry.validateContract();
+  }
+
+  /** 切换窗帘开合（拉上/拉开） */
+  toggleCurtain(): Promise<boolean> {
+    return this.curtain.toggle();
+  }
+
+  /** 设置窗帘状态 */
+  setCurtainDrawn(drawn: boolean, immediate = false): Promise<boolean> {
+    return this.curtain.setDrawn(drawn, immediate);
+  }
+
+  isCurtainDrawn(): boolean {
+    return this.curtain.drawn;
   }
 
   /** dev/test：直接完成时钟（生产构建不暴露入口） */

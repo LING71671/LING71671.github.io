@@ -907,8 +907,8 @@ def build_room(M):
                             P(wx + bx, wy + by, WINDOW["z"]), M["wood_dark"],
                             bevel=0.005))
     glass = add_plane("window_glass", ww, wh, P(wx, wy, WINDOW["z"]), M["glass"])
-    sill = add_box("decor_sill", (ww + 0.14, 0.12, 0.03),
-                   P(wx, wy - wh / 2 - 0.015, WINDOW["z"] + 0.03), M["wood_dark"],
+    sill = add_box("decor_sill", (ww + 0.14, 0.055, 0.03),
+                   P(wx, wy - wh / 2 - 0.015, WINDOW["z"] + 0.012), M["wood_dark"],
                    bevel=0.005)
 
     # —— 窗外实景：真实照片板 ——
@@ -921,8 +921,8 @@ def build_room(M):
     # —— 窗台盆栽：真实 CC0 模型（Poly Haven potted_plant_01） ——
     plant_objs = []
     plant = import_asset("potted_plant_01", "decor_potted_plant",
-                         (wx - ww / 2 + 0.15, wy - wh / 2 + 0.015, WINDOW["z"] + 0.06),
-                         rot_z=0.6, target_height=0.30)
+                         (wx - ww / 2 + 0.15, wy - wh / 2 + 0.015, WINDOW["z"] + 0.015),
+                         rot_z=0.6, target_height=0.18)
     if plant:
         plant_objs.append(plant)
 
@@ -997,29 +997,83 @@ def build_pinboard(M):
 # ---------------------------------------------------------------- 窗帘
 def build_curtain(M):
     """
-    单幅亚麻窗帘，掀到窗左侧并由黄铜束带在 y≈1.12 处收住。
-    只做一幅：右侧那幅会和桌面后沿（three z=-0.48）打架。
-    帘身离墙 0.14m —— 必须越过窗台前沿（z=-0.45），否则穿模。
+    高级亚麻落地窗帘（S-Wave Ripplefold），支持 Morph Target（Basis: 收拢扎在左侧，closed: 展开遮窗）。
+    视线区（y > 0.80）拥有饱满立体的 S 型波浪褶皱与光影明暗，桌面后夹缝（y <= 0.80）平滑过渡为 0.7cm 细波，
+    安全无干涉滑落至地面（bottom = 0.015）。
+    左侧配有实体黄铜窗帘抱钩（Wall Holdback Hook）优雅承托收拢窗帘。
     """
-    cx = -1.20
-    cz = -0.41
-    top, bottom = 1.98, 0.015
-    tie_y, tie_w = 1.12, 0.20
-    nu, nv = 18, 26
-    tile = 0.55
+    cx_basis = -1.12
+    cx_closed = -0.62
+    cz = -0.496
+    top, bottom = 1.96, 0.015
+    nu, nv = 48, 36
+    tile = 0.40
 
-    verts, uvs = [], []
+    verts_basis, verts_closed, uvs = [], [], []
+    half_closed = 0.46
+
     for j in range(nv + 1):
         t = j / nv
         y = top + (bottom - top) * t
-        pinch = math.exp(-((y - tie_y) / tie_w) ** 2)
-        half = (0.182 - 0.070 * pinch) * (1.0 + 0.10 * t)
-        amp = (0.030 - 0.019 * pinch) * (0.72 + 0.48 * t)
+
+        # --- Y方向分段深度控制（视线区饱满波浪，桌面下方收敛） ---
+        if y > 0.80:
+            # 视线区（窗户到桌面上方）：饱满深褶（波幅 1.8cm ~ 2.2cm）
+            ratio = min(1.0, max(0.0, (y - 0.80) / 1.16))
+            amp_c = 0.018 * (0.80 + 0.30 * math.sin(ratio * math.pi))
+            amp_b = 0.022 * (0.80 + 0.30 * math.sin(ratio * math.pi))
+        else:
+            # 桌面下方（y <= 0.80）：过渡到 0.7cm 细波，安全穿过桌面后夹缝至地板
+            fade = max(0.0, y / 0.80)
+            amp_c = 0.007 + 0.004 * fade
+            amp_b = 0.008 + 0.004 * fade
+
+        # --- Basis（收拢在左侧）：腰部收拢曲线 ---
+        waist_y, waist_w = 1.25, 0.28
+        pinch = math.exp(-((y - waist_y) / waist_w) ** 2)
+        if y > 1.25:
+            half_b = 0.115 - 0.055 * pinch
+        else:
+            half_b = (0.115 - 0.055 * pinch) * (1.0 + 0.35 * (1.25 - y) / 1.25)
+
         for i in range(nu + 1):
             u = i / nu
-            fold = math.sin(u * math.pi * 5.0 + 0.6)
-            verts.append(P(cx + (u - 0.5) * 2 * half, y, cz + fold * amp))
-            uvs.append((u * 2 * half / tile, (top - y) / tile))
+
+            # --- Closed 状态：双谐波 S 型波浪褶皱 ---
+            fold_c = (
+                math.sin(u * math.pi * 12.0 + 0.3) * 0.82
+                + math.sin(u * math.pi * 24.0 + 0.6) * 0.18
+            )
+            # 顶部捏褶：在最顶部 5cm（y > 1.90）稍微压平对齐挂钩
+            if y > 1.90:
+                top_fade = (top - y) / 0.06
+                cur_amp_c = amp_c * (0.35 + 0.65 * top_fade)
+            else:
+                cur_amp_c = amp_c
+
+            verts_closed.append(
+                P(
+                    cx_closed + (u - 0.5) * 2 * half_closed,
+                    y,
+                    cz + fold_c * cur_amp_c,
+                )
+            )
+
+            # --- Basis 状态：密集堆叠褶皱 ---
+            fold_b = (
+                math.sin(u * math.pi * 8.0 + 0.5) * 0.80
+                + math.sin(u * math.pi * 16.0) * 0.20
+            )
+            verts_basis.append(
+                P(
+                    cx_basis + (u - 0.5) * 2 * half_b,
+                    y,
+                    cz + fold_b * amp_b,
+                )
+            )
+
+            # UV 映射：保持纹理密度均匀
+            uvs.append((u * 2 * half_closed / tile, (top - y) / tile))
 
     faces = []
     for j in range(nv):
@@ -1028,7 +1082,7 @@ def build_curtain(M):
             faces.append((a, a + 1, a + nu + 2, a + nu + 1))
 
     mesh = bpy.data.meshes.new("decor_curtain")
-    mesh.from_pydata(verts, [], faces)
+    mesh.from_pydata(verts_basis, [], faces)
     mesh.update()
     uv_layer = mesh.uv_layers.new(name="UVMap")
     for poly in mesh.polygons:
@@ -1036,21 +1090,38 @@ def build_curtain(M):
             uv_layer.data[li].uv = uvs[mesh.loops[li].vertex_index]
     curtain = bpy.data.objects.new("decor_curtain", mesh)
     bpy.context.collection.objects.link(curtain)
-    solid = curtain.modifiers.new("solidify", 'SOLIDIFY')
-    solid.thickness = 0.0035
-    solid.offset = 0.0
+
+    # 形态键：Basis 与 closed
+    curtain.shape_key_add(name="Basis", from_mix=False)
+    sk_closed = curtain.shape_key_add(name="closed", from_mix=False)
+    for idx, pt in enumerate(verts_closed):
+        sk_closed.data[idx].co = pt
+
     _finish(curtain, "decor_curtain", M["linen"], smooth=True)
 
-    # 窗杆（在取景带之上，但补齐了才经得起抬镜头）+ 端头球 + 黄铜束带
-    rod = add_cylinder("decor_curtain_rod", 0.011, 0.011, 1.34,
-                       P(-0.72, top + 0.055, cz), M["brass"], verts=14, axis='X')
-    finial = add_sphere("decor_curtain_finial", 0.019,
-                        P(-1.39, top + 0.055, cz), M["brass"], seg=12)
-    # 束带是水平的一圈（torus 默认就躺在 Blender XY = 水平面），沿进深压扁贴住帘身
-    holdback = add_torus("decor_curtain_tie", 0.120, 0.0065,
-                         P(cx, tie_y, cz), M["linen_dim"])
-    holdback.scale = (1.0, 0.32, 1.0)
-    return [curtain, rod, finial, holdback]
+    # --- 窗帘杆 + 左右端头球 ---
+    rod = add_cylinder("decor_curtain_rod", 0.010, 0.010, 1.22,
+                       P(-0.62, top + 0.035, cz), M["brass"], verts=16, axis='X')
+    finial_l = add_sphere("decor_curtain_finial_l", 0.016,
+                          P(-1.23, top + 0.035, cz), M["brass"], seg=14)
+    finial_r = add_sphere("decor_curtain_finial_r", 0.016,
+                          P(-0.01, top + 0.035, cz), M["brass"], seg=14)
+
+    # --- 黄铜窗帘抱钩 (Wall Holdback Hook) ---
+    # 固定在左侧墙壁（x = -1.215），向外延伸并环抱窗帘腰部
+    hook_base = add_cylinder("decor_curtain_tie", 0.016, 0.016, 0.012,
+                             P(-1.215, 1.25, -0.535), M["brass"], verts=14, axis='X')
+    hook_arm = add_cylinder("decor_curtain_hook_arm", 0.005, 0.005, 0.075,
+                            P(-1.215, 1.25, -0.495), M["brass"], verts=10, axis='Y')
+    hook_bar = add_cylinder("decor_curtain_hook_bar", 0.005, 0.005, 0.14,
+                            P(-1.145, 1.25, -0.458), M["brass"], verts=10, axis='X')
+    hook_ball = add_sphere("decor_curtain_hook_ball", 0.011,
+                           P(-1.075, 1.25, -0.458), M["brass"], seg=12)
+
+    parent([hook_arm, hook_bar, hook_ball], hook_base)
+    hook_objs = [hook_base, hook_arm, hook_bar, hook_ball]
+
+    return [curtain, rod, finial_l, finial_r] + hook_objs
 
 
 # ---------------------------------------------------------------- 书桌

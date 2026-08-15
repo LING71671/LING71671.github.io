@@ -233,11 +233,21 @@ export class LightingSystem {
     if (t >= 1) this.updateShadowCasters();
   }
 
+  /** 窗帘拉上进度 0=拉开 1=拉上 */
+  private curtainProgress = 0;
+
+  /** 窗帘拉上联动：衰减窗外直射光 */
+  setCurtainDrawn(progress: number): void {
+    this.curtainProgress = progress;
+    this.applyValues(this.current);
+  }
+
   private applyValues(v: LightingValues): void {
     this.hemi.intensity = v.hemiI;
     this.hemi.color.copy(v.hemiSky);
     this.hemi.groundColor.copy(v.hemiGround);
-    this.sun.intensity = v.sunI;
+    const sunCurtainMult = 1 - this.curtainProgress * 0.65;
+    this.sun.intensity = v.sunI * sunCurtainMult;
     this.sun.color.copy(v.sunColor);
     this.lampSpot.intensity = v.lampI;
     this.lampSpot.color.copy(v.lampColor);
