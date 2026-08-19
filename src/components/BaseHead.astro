@@ -11,6 +11,8 @@ export interface Props {
   publishedTime?: Date;
   updatedTime?: Date;
   author?: string;
+  /** 仅 3D 首页预载核心模型；纯 HTML 深链不下载任何书桌资源。 */
+  preloadDesk?: boolean;
 }
 
 const {
@@ -21,6 +23,7 @@ const {
   publishedTime,
   updatedTime,
   author = SITE.name,
+  preloadDesk = false,
 } = Astro.props;
 
 const fullTitle = title ? `${title} · ${SITE.title}` : SITE.title;
@@ -52,14 +55,16 @@ const jsonLd =
 <meta name="description" content={description} />
 <link rel="canonical" href={canonical} />
 <link rel="icon" type="image/svg+xml" href={withBase('/favicon.svg')} />
-{/* 入口暗态画面靠 desk.glb 填充墙面：clock.glb（116K）串行 await 完成后才开下 desk.glb（3.1M），
-    期间空场景透出 ENTRY 暗紫。在 HTML 阶段并行预加载两者，与 3D 的 JS chunk 下载重叠，
-    desk.glb 到位越早，墙面填充越早，淡紫期越短 */}
-{/* HDRI（1.7M）异步加载完成后替换 scene.environment，PBR 反射会突变（视觉上「变暗一个度」）。
-    趁首屏白色时预加载，让替换发生在画面出现前，消除可见突变 */}
-<link rel="preload" as="fetch" href={withBase('/models/clock.glb')} fetchpriority="high" crossorigin="anonymous" />
-<link rel="preload" as="fetch" href={withBase('/models/desk.glb')} fetchpriority="high" crossorigin="anonymous" />
-<link rel="preload" as="fetch" href={withBase('/env/artist_workshop_1k.hdr')} fetchpriority="high" crossorigin="anonymous" />
+{/* 仅首页把两个核心 GLB 与 JS 下载重叠；运行时仍等待二者原子装配后才揭示。
+    HDRI 有 RoomEnvironment 兜底，保留异步低优先级加载，避免抢占核心场景带宽。 */}
+{
+  preloadDesk && (
+    <>
+      <link rel="preload" as="fetch" href={withBase('/models/clock.glb')} fetchpriority="high" crossorigin="anonymous" />
+      <link rel="preload" as="fetch" href={withBase('/models/desk.glb')} fetchpriority="high" crossorigin="anonymous" />
+    </>
+  )
+}
 <link
   rel="alternate"
   type="application/rss+xml"

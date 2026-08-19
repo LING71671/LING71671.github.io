@@ -22,7 +22,7 @@ import '../components/views/StickyNotesView.astro';
 const latest = publishedPosts(await getCollection('posts')).slice(0, 3);
 ---
 
-<BaseLayout description={SITE.description}>
+<BaseLayout description={SITE.description} preloadDesk>
   {/* WebGL 能力检测：先于首绘，成功则隐藏语义首页、显示 3D（自动降级，无用户开关） */}
   <script is:inline slot="head">
     (function () {
@@ -67,7 +67,11 @@ const latest = publishedPosts(await getCollection('posts')).slice(0, 3);
   </main>
 
   {/* —— 3D 书桌 —— */}
-  <div id="desk-root">
+  <div id="desk-root" aria-busy="true">
+    <div id="scene-loader" role="status" aria-live="polite">
+      <span class="scene-loader__dial" aria-hidden="true"></span>
+      <span class="scene-loader__label hand">正在点亮书桌</span>
+    </div>
     <canvas id="desk-canvas"></canvas>
     {/* CSS3D 屏幕系统层（ScreenOS 把 DOM 桌面贴进 3D 显示器；未聚焦时不拦截指针） */}
     <div id="screen-os-layer" aria-hidden="true"></div>
@@ -235,6 +239,87 @@ const latest = publishedPosts(await getCollection('posts')).slice(0, 3);
   #desk-root {
     position: fixed;
     inset: 0;
+    background: #0e0a06;
+  }
+
+  /* 只在完整场景首帧提交前出现；不泄露默认相机、孤立时钟或半套房间。 */
+  #scene-loader {
+    position: absolute;
+    inset: 0;
+    z-index: 15;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: var(--space-3);
+    background:
+      radial-gradient(circle at 50% 46%, rgb(78 52 24 / 0.24), transparent 28%),
+      #0e0a06;
+    color: #cbbd9f;
+    opacity: 1;
+    visibility: visible;
+    transition:
+      opacity var(--dur-slow) var(--ease-out),
+      visibility 0s linear var(--dur-slow);
+  }
+
+  #desk-root.scene-ready #scene-loader {
+    opacity: 0;
+    visibility: hidden;
+  }
+
+  .scene-loader__dial {
+    position: relative;
+    width: 2.15rem;
+    aspect-ratio: 1;
+    border: 1px solid rgb(216 162 74 / 0.45);
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 4px rgb(216 162 74 / 0.04);
+  }
+
+  .scene-loader__dial::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 0.28rem;
+    aspect-ratio: 1;
+    translate: -50% -50%;
+    border-radius: 50%;
+    background: #d8a24a;
+  }
+
+  .scene-loader__dial::after {
+    content: '';
+    position: absolute;
+    left: calc(50% - 0.5px);
+    bottom: 50%;
+    width: 1px;
+    height: 31%;
+    background: #d8a24a;
+    transform-origin: 50% 100%;
+    animation: scene-loader-turn 1.8s linear infinite;
+  }
+
+  .scene-loader__label {
+    font-size: var(--text-sm);
+    letter-spacing: 0.05em;
+  }
+
+  @keyframes scene-loader-turn {
+    to {
+      transform: rotate(1turn);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #scene-loader {
+      transition-duration: 1ms;
+    }
+
+    .scene-loader__dial::after {
+      animation: none;
+      transform: rotate(120deg);
+    }
   }
 
   #desk-canvas {

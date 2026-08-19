@@ -26,6 +26,7 @@ export class SceneManager {
   private running = false;
   private rafId = 0;
   private renderPaused = false;
+  private afterRender = new Set<() => void>();
 
   constructor(readonly canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({
@@ -71,6 +72,17 @@ export class SceneManager {
     this.needsRender = true;
   }
 
+  /**
+   * 等待下一张 WebGL 帧真正提交。
+   * 首屏揭示以这个信号为准，避免 DOM 已进入 ready 而 canvas 仍停在清屏色。
+   */
+  afterNextRender(): Promise<void> {
+    return new Promise((resolve) => {
+      this.afterRender.add(resolve);
+      this.invalidate();
+    });
+  }
+
   /** 阴影贴图重建（灯光/可动件变化时调用一次） */
   updateShadows(): void {
     this.renderer.shadowMap.needsUpdate = true;
@@ -108,6 +120,11 @@ export class SceneManager {
       if (this.needsRender && !this.renderPaused) {
         this.needsRender = false;
         this.renderer.render(this.scene, this.camera);
+        if (this.afterRender.size > 0) {
+          const waiters = [...this.afterRender];
+          this.afterRender.clear();
+          for (const resolve of waiters) resolve();
+        }
       }
     };
     this.rafId = requestAnimationFrame(loop);
@@ -116,6 +133,8 @@ export class SceneManager {
   dispose(): void {
     this.running = false;
     cancelAnimationFrame(this.rafId);
+    for (const resolve of this.afterRender) resolve();
+    this.afterRender.clear();
     this.renderer.dispose();
   }
 }

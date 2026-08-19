@@ -7,8 +7,8 @@ import { createScreenTexture } from '../placeholder/PlaceholderDesk';
 import { mountCalendarFace } from '../content/CalendarFace';
 
 /**
- * GLTF 资产加载：clock.glb 先行（入口时钟），desk.glb 随后台并载。
- * 加载失败返回 null，由调用方回落占位场景 —— 模型缺失时站点依然完整可用。
+ * GLTF 单项加载器。调用方把 clock.glb + desk.glb 视作原子资产组，
+ * 任一失败都回落完整占位场景，禁止把半套模型提交到可见 scene。
  * 支持 meshopt 压缩产物（scripts/optimize-gltf.mjs 的输出）。
  */
 export class AssetLoader {
@@ -22,7 +22,10 @@ export class AssetLoader {
     try {
       const gltf = await this.loader.loadAsync(url);
       return gltf.scene;
-    } catch {
+    } catch (error) {
+      if (import.meta.env.DEV) {
+        console.warn(`[desk] GLTF 加载失败：${url}`, error);
+      }
       return null;
     }
   }

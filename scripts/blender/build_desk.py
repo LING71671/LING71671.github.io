@@ -1004,7 +1004,13 @@ def build_curtain(M):
     """
     cx_basis = -1.12
     cx_closed = -0.62
-    cz = -0.496
+    # 帘杆与桌面后夹缝继续沿用原深度。窗台最前缘约为
+    # WINDOW.z + 0.012 + 0.055 / 2 = -0.5005；若整幅帘都放在 rod_z，
+    # 约 2cm 的褶皱谷会退到窗台后方，形成周期性的穿模黑块。
+    # 仅在观看/窗户带把帘布中心向观者（three +Z）拱出 2.6cm，
+    # 底部在桌面上方收回、顶部在帘杆前收回，保持两端原有安全间距。
+    rod_z = -0.496
+    view_clearance = 0.026
     top, bottom = 1.96, 0.015
     nu, nv = 48, 36
     tile = 0.40
@@ -1012,9 +1018,19 @@ def build_curtain(M):
     verts_basis, verts_closed, uvs = [], [], []
     half_closed = 0.46
 
+    def smoothstep01(v):
+        v = min(1.0, max(0.0, v))
+        return v * v * (3.0 - 2.0 * v)
+
     for j in range(nv + 1):
         t = j / nv
         y = top + (bottom - top) * t
+
+        # y<=0.80 时保持在桌面后沿之后；0.80~0.96m 平滑前移以越过窗台。
+        # 1.72m 起逐渐回到帘杆深度，1.96m 顶边与杆件的原始关系不变。
+        lower_clearance = smoothstep01((y - 0.80) / 0.16)
+        upper_clearance = 1.0 - smoothstep01((y - 1.72) / 0.24)
+        clearance = view_clearance * lower_clearance * upper_clearance
 
         # --- Y方向分段深度控制（视线区饱满波浪，桌面下方收敛） ---
         if y > 0.80:
@@ -1036,6 +1052,12 @@ def build_curtain(M):
         else:
             half_b = (0.115 - 0.055 * pinch) * (1.0 + 0.35 * (1.25 - y) / 1.25)
 
+        # 收拢态在抱钩腰部回撤，避免向前拱出的帘布切进实体抱钩；
+        # 窗台高度处衰减已经很小，仍保留足够的前向净距。
+        holdback_depth = math.exp(-((y - waist_y) / 0.18) ** 2)
+        cz_basis = rod_z + clearance * (1.0 - 0.82 * holdback_depth)
+        cz_closed = rod_z + clearance
+
         for i in range(nu + 1):
             u = i / nu
 
@@ -1055,7 +1077,7 @@ def build_curtain(M):
                 P(
                     cx_closed + (u - 0.5) * 2 * half_closed,
                     y,
-                    cz + fold_c * cur_amp_c,
+                    cz_closed + fold_c * cur_amp_c,
                 )
             )
 
@@ -1068,7 +1090,7 @@ def build_curtain(M):
                 P(
                     cx_basis + (u - 0.5) * 2 * half_b,
                     y,
-                    cz + fold_b * amp_b,
+                    cz_basis + fold_b * amp_b,
                 )
             )
 
@@ -1101,11 +1123,11 @@ def build_curtain(M):
 
     # --- 窗帘杆 + 左右端头球 ---
     rod = add_cylinder("decor_curtain_rod", 0.010, 0.010, 1.22,
-                       P(-0.62, top + 0.035, cz), M["brass"], verts=16, axis='X')
+                       P(-0.62, top + 0.035, rod_z), M["brass"], verts=16, axis='X')
     finial_l = add_sphere("decor_curtain_finial_l", 0.016,
-                          P(-1.23, top + 0.035, cz), M["brass"], seg=14)
+                          P(-1.23, top + 0.035, rod_z), M["brass"], seg=14)
     finial_r = add_sphere("decor_curtain_finial_r", 0.016,
-                          P(-0.01, top + 0.035, cz), M["brass"], seg=14)
+                          P(-0.01, top + 0.035, rod_z), M["brass"], seg=14)
 
     # --- 黄铜窗帘抱钩 (Wall Holdback Hook) ---
     # 固定在左侧墙壁（x = -1.215），向外延伸并环抱窗帘腰部

@@ -55,6 +55,8 @@ async function run(): Promise<void> {
   if (!document.documentElement.classList.contains('webgl')) return;
   const canvas = $('desk-canvas') as HTMLCanvasElement | null;
   if (!canvas) return;
+  const deskRoot = $('desk-root');
+  const sceneLoader = $('scene-loader');
 
   // 刷新 → 重新体验入口（会话标记清除）
   const navEntry = performance.getEntriesByType('navigation')[0] as
@@ -215,6 +217,26 @@ async function run(): Promise<void> {
 
   api.on('contextlost', () => degrade());
 
+  // 完整资产、最终相机/光照和第一张 WebGL 帧都就绪后，才一次性揭示场景。
+  let sceneRevealed = false;
+  const revealScene = (): void => {
+    if (sceneRevealed) return;
+    sceneRevealed = true;
+    deskRoot?.classList.add('scene-ready');
+    deskRoot?.setAttribute('aria-busy', 'false');
+    if (!sceneLoader) return;
+    sceneLoader.addEventListener(
+      'transitionend',
+      (event) => {
+        if (event.propertyName === 'opacity') sceneLoader.remove();
+      },
+      { once: true },
+    );
+    // 页面恢复、降动效或浏览器跳过 transitionend 时的收口。
+    window.setTimeout(() => sceneLoader.remove(), 800);
+  };
+  api.on('scene:ready', revealScene);
+
   // 主题（台灯档位）驱动 3D 光照 —— window.deskTheme 是唯一主题耦合点
   window.addEventListener('desk:theme', () => {
     const lamp = window.deskTheme?.getLamp() ?? 'ambient';
@@ -249,6 +271,8 @@ async function run(): Promise<void> {
       lamp: window.deskTheme?.getLamp() ?? 'ambient',
       muted: initialMuted,
     });
+    // 事件监听是主路径；这里保证未来实现变更也不会让加载层永久滞留。
+    revealScene();
   } catch {
     degrade();
     return;

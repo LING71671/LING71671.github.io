@@ -59,8 +59,6 @@ export class DeskScene {
   private drawerItems: DrawerItems | null = null;
   /** 当前就地阅读聚焦的热点（notebook 书页 / monitor 屏幕系统） */
   private inSceneId: HotspotId | null = null;
-  /** desk.glb 后台加载完成（占位路径下立即 resolved） */
-  private deskReady: Promise<void> = Promise.resolve();
 
   async init(canvas: HTMLCanvasElement, opts: InitOptions = {}): Promise<void> {
     // canvas 尺寸就绪后再初始化（Astro 水合时机与布局竞态防护）
@@ -82,7 +80,6 @@ export class DeskScene {
     );
     this.clock = new ClockController(this.manager, this.registry, this.bus, this.audio);
     this.hotspots = new HotspotSystem(this.manager, this.registry, this.bus);
-    this.hotspots.build();
     this.interaction = new InteractionManager(
       this.manager,
       this.rig,
@@ -103,79 +100,84 @@ export class DeskScene {
       }
     });
 
-    this.resizeObserver = new ResizeObserver(() => this.manager.resize());
-    this.resizeObserver.observe(canvas);
-    this.manager.resize();
-
-    this.manager.start();
-
-    // desk.glb 到位后重建热点命中盒并重放光照（灯泡/屏幕强度落到新材质）
-    void this.deskReady.then(() => {
-      this.hotspots.build();
-      // 只重放当前光照到新材质，不重算 current（入口渐亮期间重算会覆盖 setEntryReveal）
-      this.lighting.reapplyValues();
-      this.curtain.mount();
-      // 书页渲染器：把文章排版到笔记本书页上（就地阅读）
-      this.bookRenderer = new BookRenderer(this.manager, this.registry);
-      this.bookRenderer.onRequestExit = () => void this.unfocus();
-      // 就地聚焦的点击分发：显示器聚焦时画布点击都视为「屏幕外」（DOM 屏幕自行消费自己的事件）
-      this.interaction.onBookClick = (rc) => {
-        if (this.inSceneId === 'monitor') return false;
-        return this.bookRenderer?.handleClick(rc) ?? false;
-      };
-      this.interaction.onBookHover = (rc) => {
-        if (this.inSceneId === 'monitor') return false;
-        return this.bookRenderer?.hitTest(rc) ?? false;
-      };
-      this.interaction.onBookMiss = () => void this.unfocus();
-      void this.bookRenderer.mount();
-      // 屏幕系统：把可操作的桌面 OS 贴进显示器（失败时静默保留贴图屏幕）
-      this.screenOS = new ScreenOS(this.manager, this.registry);
-      this.screenOS.onRequestExit = () => void this.unfocus();
-      this.screenOS.mount();
-      // 抽屉物件：拉开后可点的小物 + 彩蛋卡片（不弹 HTML 面板）
-      this.drawerItems = new DrawerItems(this.manager, this.registry);
-      this.drawerItems.onRequestExit = () => void this.unfocus();
-      this.interaction.onDrawerClick = (rc) =>
-        this.drawerItems?.handleClick(rc) ?? false;
-      this.interaction.onDrawerHover = (rc) =>
-        this.drawerItems?.hitTest(rc) ?? false;
-      this.interaction.onDrawerMiss = () => void this.unfocus();
-      void this.drawerItems.mount();
-      if (this.state === 'idle' || this.state === 'focusing' || this.state === 'focused') {
-        this.screenOS.setRevealed(true);
-      }
-      this.manager.invalidate();
-    });
-
     const dayBlend = LightingSystem.initialDayBlend();
     const lamp = opts.lamp ?? 'ambient';
 
+    // 首帧前先把状态、相机与光照一次性落定，canvas 不再经历默认相机或半套场景。
     if (opts.skipEntry) {
-      await this.deskReady;
       this.state = 'idle';
       this.rig.snapTo(HOME_POSE);
       this.lighting.snapTo({ phase: 'scene', dayBlend, lamp });
       this.clock.setToRealTime();
       this.interaction.mode = 'scene';
       this.rig.enableInput(true);
-      this.screenOS?.setRevealed(true);
-      this.bus.emit('scene:ready');
-      this.bus.emit('entry:complete');
-      return;
+    } else {
+      this.state = 'entry';
+      this.rig.snapTo(ENTRY_POSE);
+      this.lighting.snapTo({ phase: 'entry', dayBlend, lamp });
+      this.clock.begin();
+      this.interaction.mode = 'entry';
+      this.clock.onSuccess = () => void this.runEntrySequence(dayBlend, lamp);
     }
 
-    this.state = 'entry';
-    this.rig.snapTo(ENTRY_POSE);
-    this.lighting.snapTo({ phase: 'entry', dayBlend, lamp });
-    this.clock.begin();
-    this.interaction.mode = 'entry';
-    this.clock.onSuccess = () => void this.runEntrySequence(dayBlend, lamp);
+    // 所有必需 GLB 已原子装配；首帧前再挂载运行时内容与最终命中盒。
+    await this.mountSceneFeatures();
+    this.hotspots.build();
+    if (opts.skipEntry) this.screenOS?.setRevealed(true);
+
+    this.resizeObserver = new ResizeObserver(() => this.manager.resize());
+    this.resizeObserver.observe(canvas);
+    this.manager.resize();
+    this.manager.updateShadows();
+    this.manager.start();
+
+    // readiness 的唯一语义：完整场景已完成至少一次真实 WebGL 绘制。
+    await this.manager.afterNextRender();
     this.bus.emit('scene:ready');
+    if (opts.skipEntry) this.bus.emit('entry:complete');
+  }
+
+  /** 完整 GLB 到位后挂载可选内容系统；失败不会阻断核心书桌首帧。 */
+  private async mountSceneFeatures(): Promise<void> {
+    this.curtain.mount();
+
+    // 书页渲染器：把文章排版到笔记本书页上（就地阅读）
+    this.bookRenderer = new BookRenderer(this.manager, this.registry);
+    this.bookRenderer.onRequestExit = () => void this.unfocus();
+    // 显示器聚焦时画布点击都视为「屏幕外」（DOM 屏幕自行消费自己的事件）
+    this.interaction.onBookClick = (rc) => {
+      if (this.inSceneId === 'monitor') return false;
+      return this.bookRenderer?.handleClick(rc) ?? false;
+    };
+    this.interaction.onBookHover = (rc) => {
+      if (this.inSceneId === 'monitor') return false;
+      return this.bookRenderer?.hitTest(rc) ?? false;
+    };
+    this.interaction.onBookMiss = () => void this.unfocus();
+
+    // 屏幕系统：把可操作的桌面 OS 贴进显示器（失败时静默保留贴图屏幕）
+    this.screenOS = new ScreenOS(this.manager, this.registry);
+    this.screenOS.onRequestExit = () => void this.unfocus();
+    this.screenOS.mount();
+
+    // 抽屉物件：拉开后可点的小物 + 彩蛋卡片（不弹 HTML 面板）
+    this.drawerItems = new DrawerItems(this.manager, this.registry);
+    this.drawerItems.onRequestExit = () => void this.unfocus();
+    this.interaction.onDrawerClick = (rc) =>
+      this.drawerItems?.handleClick(rc) ?? false;
+    this.interaction.onDrawerHover = (rc) =>
+      this.drawerItems?.hitTest(rc) ?? false;
+    this.interaction.onDrawerMiss = () => void this.unfocus();
+
+    await Promise.allSettled([
+      this.bookRenderer.mount(),
+      this.drawerItems.mount(),
+    ]);
+    this.manager.invalidate();
   }
 
   /**
-   * 场景来源：优先 GLTF（Blender 产物），失败回落占位几何体。
+   * 场景来源：时钟与房间作为一个原子资产组装；任一失败都只回落一套完整占位场景。
    * dev 下 ?placeholder=1 强制占位（对比调试）。
    */
   private async composeScene(): Promise<void> {
@@ -184,25 +186,20 @@ export class DeskScene {
     const loader = new AssetLoader();
 
     if (!forcePlaceholder) {
-      // clock.glb 与 desk.glb 并行加载（网络已由 preload 并行，这里让 parse/decode 也并行）：
-      // clock.glb 到位即首帧，desk.glb 后台并载填充墙面，缩短 ENTRY 暗紫空场期
-      const clockPromise = loader.load(withBase('/models/clock.glb'));
-      this.deskReady = loader.load(withBase('/models/desk.glb')).then((deskScene) => {
-        if (deskScene) {
-          AssetLoader.prepare(deskScene);
-          this.manager.scene.add(deskScene);
-          this.registry.resolve(this.manager.scene);
-        }
-        this.bus.emit('assets:progress', { loaded: 2, total: 2 });
-      });
-      const clockScene = await clockPromise;
-      if (clockScene) {
+      const [clockScene, deskScene] = await Promise.all([
+        loader.load(withBase('/models/clock.glb')),
+        loader.load(withBase('/models/desk.glb')),
+      ]);
+
+      if (clockScene && deskScene) {
         AssetLoader.prepare(clockScene);
         AssetLoader.ensureHandPivots(clockScene);
         AssetLoader.ensureClockHitProxy(clockScene);
-        this.manager.scene.add(clockScene);
+        AssetLoader.prepare(deskScene, () => this.manager.invalidate());
+        // 只做一次 scene 提交和一次命名解析，杜绝「孤钟 → 房间跳入」。
+        this.manager.scene.add(deskScene, clockScene);
         this.registry.resolve(this.manager.scene);
-        this.bus.emit('assets:progress', { loaded: 1, total: 2 });
+        this.bus.emit('assets:progress', { loaded: 2, total: 2 });
         return;
       }
     }
@@ -231,9 +228,8 @@ export class DeskScene {
     this.interaction.mode = 'disabled';
 
     // 秒针已启动、短句显示中；停一拍让仪式感落地。
-    // 若 desk.glb 未就绪则自然停驻在「时间继续了。」画面等待。
+    // 完整房间在入口揭示前已经就绪，这里不再插入任何资源等待阶段。
     await sleep(1.6);
-    await this.deskReady;
 
     // 房间苏醒：光照渐变 + 指针扫向真实时间，同时相机开始后退
     void this.lighting.transitionTo({ phase: 'scene', dayBlend, lamp }, 4.5);
