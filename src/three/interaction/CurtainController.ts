@@ -4,7 +4,7 @@ import type { NodeRegistry } from '../core/NodeRegistry';
 import type { AudioManager } from '../audio/AudioManager';
 import type { LightingSystem } from '../lighting/LightingSystem';
 import { NODES } from '../config/naming';
-import { easeOutCubic, type Tween } from '../utils/tween';
+import { easeInOutCubic, type Tween } from '../utils/tween';
 
 export class CurtainController {
   private curtainMesh: THREE.Mesh | null = null;
@@ -88,8 +88,9 @@ export class CurtainController {
     const promise = new Promise<boolean>((resolve) => {
       this.settleActive = resolve;
       const tween = this.manager.tweens.run({
-        duration: 0.55,
-        ease: easeOutCubic,
+        // 布料需要有可感知的起步与收势；过短的 ease-out 会像刚性面片横移。
+        duration: 0.95,
+        ease: easeInOutCubic,
         onUpdate: (t) => {
           this.progress = from + (to - from) * t;
           this.applyProgress(this.progress);
@@ -125,14 +126,16 @@ export class CurtainController {
     }
 
     if (this.pottedPlant) {
-      // 帘沿走到盆栽位置后再隐藏，避免一开始拉动就凭空消失。
-      this.pottedPlant.visible = k < 0.3;
+      // 盆栽始终留在真实空间里，由前移后的布料自然遮挡；阈值隐藏会在
+      // 拉帘中途产生明显 pop，也掩盖不了真正的几何穿插问题。
+      this.pottedPlant.visible = true;
     }
 
     this.lighting.setCurtainDrawn(k);
-    // shadowMap 为按需更新；形变期间节流重建，端点强制收口。
+    // shadowMap 为按需更新；约 20fps 重建动态阴影、形变本体仍逐帧渲染。
+    // 100ms 的旧节流会让帘影明显以 10fps 跳动，破坏“丝滑”的触感。
     const now = performance.now();
-    if (k === 0 || k === 1 || now - this.lastShadowAt >= 100) {
+    if (k === 0 || k === 1 || now - this.lastShadowAt >= 50) {
       this.lastShadowAt = now;
       this.manager.updateShadows();
     } else {

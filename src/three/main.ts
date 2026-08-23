@@ -14,6 +14,7 @@ import { BookRenderer } from './content/BookRenderer';
 import { ScreenOS } from './content/ScreenOS';
 import { DrawerItems } from './content/DrawerItems';
 import { CurtainController } from './interaction/CurtainController';
+import type { CalendarFaceHandle } from './content/CalendarFace';
 import { withBase } from '../lib/url';
 import { HOTSPOTS, type HotspotId } from '../lib/hotspots';
 import type { QualityTier } from '../scripts/desk/storage';
@@ -57,6 +58,9 @@ export class DeskScene {
   private bookRenderer: BookRenderer | null = null;
   private screenOS: ScreenOS | null = null;
   private drawerItems: DrawerItems | null = null;
+  private calendarFace: CalendarFaceHandle | null = null;
+  private loaderTargetLamp: LampMode = 'ambient';
+  private loaderHandoffReleased = false;
   /** 当前就地阅读聚焦的热点（notebook 书页 / monitor 屏幕系统） */
   private inSceneId: HotspotId | null = null;
 
@@ -72,6 +76,7 @@ export class DeskScene {
 
     this.rig = new CameraRig(this.manager);
     this.lighting = new LightingSystem(this.manager, this.registry);
+    await this.lighting.prepare();
     this.curtain = new CurtainController(
       this.manager,
       this.registry,
@@ -100,24 +105,24 @@ export class DeskScene {
       }
     });
 
-    const dayBlend = LightingSystem.initialDayBlend();
     const lamp = opts.lamp ?? 'ambient';
+    this.loaderTargetLamp = lamp;
 
     // 首帧前先把状态、相机与光照一次性落定，canvas 不再经历默认相机或半套场景。
     if (opts.skipEntry) {
       this.state = 'idle';
       this.rig.snapTo(HOME_POSE);
-      this.lighting.snapTo({ phase: 'scene', dayBlend, lamp });
-      this.clock.setToRealTime();
+      this.lighting.snapTo({ phase: 'scene', lamp: 'ambient' });
+      this.clock.setToLoaderHandoff();
       this.interaction.mode = 'scene';
       this.rig.enableInput(true);
     } else {
       this.state = 'entry';
       this.rig.snapTo(ENTRY_POSE);
-      this.lighting.snapTo({ phase: 'entry', dayBlend, lamp });
+      this.lighting.snapTo({ phase: 'entry', lamp: 'ambient' });
       this.clock.begin();
       this.interaction.mode = 'entry';
-      this.clock.onSuccess = () => void this.runEntrySequence(dayBlend, lamp);
+      this.clock.onSuccess = () => void this.runEntrySequence();
     }
 
     // 所有必需 GLB 已原子装配；首帧前再挂载运行时内容与最终命中盒。
@@ -125,14 +130,19 @@ export class DeskScene {
     this.hotspots.build();
     if (opts.skipEntry) this.screenOS?.setRevealed(true);
 
-    this.resizeObserver = new ResizeObserver(() => this.manager.resize());
+    const resizeScene = () => {
+      this.manager.resize();
+      this.rig.resize();
+    };
+    this.resizeObserver = new ResizeObserver(resizeScene);
     this.resizeObserver.observe(canvas);
-    this.manager.resize();
+    resizeScene();
     this.manager.updateShadows();
     this.manager.start();
 
     // readiness 的唯一语义：完整场景已完成至少一次真实 WebGL 绘制。
     await this.manager.afterNextRender();
+    this.lighting.startRealtime();
     this.bus.emit('scene:ready');
     if (opts.skipEntry) this.bus.emit('entry:complete');
   }
@@ -195,7 +205,7 @@ export class DeskScene {
         AssetLoader.prepare(clockScene);
         AssetLoader.ensureHandPivots(clockScene);
         AssetLoader.ensureClockHitProxy(clockScene);
-        AssetLoader.prepare(deskScene, () => this.manager.invalidate());
+        this.calendarFace = AssetLoader.prepare(deskScene, () => this.manager.invalidate());
         // 只做一次 scene 提交和一次命名解析，杜绝「孤钟 → 房间跳入」。
         this.manager.scene.add(deskScene, clockScene);
         this.registry.resolve(this.manager.scene);
@@ -223,7 +233,7 @@ export class DeskScene {
   }
 
   /** 成功 → 「时间继续了。」→ 房间苏醒 → 相机后退 → 主场景 */
-  private async runEntrySequence(dayBlend: number, lamp: LampMode): Promise<void> {
+  private async runEntrySequence(): Promise<void> {
     this.state = 'transition';
     this.interaction.mode = 'disabled';
 
@@ -232,7 +242,7 @@ export class DeskScene {
     await sleep(1.6);
 
     // 房间苏醒：光照渐变 + 指针扫向真实时间，同时相机开始后退
-    void this.lighting.transitionTo({ phase: 'scene', dayBlend, lamp }, 4.5);
+    void this.lighting.transitionTo({ phase: 'scene', lamp: this.loaderTargetLamp }, 4.5);
     void this.clock.sweepToRealTime(2.2);
     this.clock.setTickGlow(0);
     // 相机后退时显示器随房间一起「亮起」
@@ -327,9 +337,36 @@ export class DeskScene {
   }
 
   setLampMode(mode: LampMode): void {
+    this.loaderTargetLamp = mode;
+    if (!this.loaderHandoffReleased) return;
     this.audio.lampClick();
     void this.lighting.transitionTo({ lamp: mode }, 1.0);
     this.bus.emit('lamp:modeChange', { mode });
+  }
+
+  /**
+   * 加载层移除后的唯一交接点：加载海报与 WebGL 首帧先保持
+   * canonical ambient / 6:50 / 无屏幕时间，然后再平滑进入用户的实时状态。
+   */
+  releaseLoaderHandoff(): void {
+    if (this.loaderHandoffReleased) return;
+    this.loaderHandoffReleased = true;
+
+    const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    this.screenOS?.releaseLoaderHandoff();
+    this.calendarFace?.releaseLoaderHandoff();
+    this.bookRenderer?.releaseLoaderHandoff();
+    this.lighting.releaseLoaderHandoff();
+    if (reducedMotion) {
+      this.lighting.snapTo({ lamp: this.loaderTargetLamp });
+    } else {
+      void this.lighting.transitionTo({ lamp: this.loaderTargetLamp }, 1.2);
+    }
+
+    if (this.state === 'idle') {
+      if (reducedMotion) this.clock.setToRealTime();
+      else void this.clock.releaseLoaderHandoff(1.35);
+    }
   }
 
   setMuted(muted: boolean): void {
@@ -376,7 +413,7 @@ export class DeskScene {
   debugCompleteClock(): void {
     if (this.state !== 'entry') return;
     this.clock.setToRealTime();
-    void this.runEntrySequence(LightingSystem.initialDayBlend(), 'ambient');
+    void this.runEntrySequence();
   }
 
   dispose(): void {
@@ -384,6 +421,8 @@ export class DeskScene {
     this.screenOS?.dispose();
     this.bookRenderer?.dispose();
     this.drawerItems?.dispose();
+    this.calendarFace?.dispose();
+    this.lighting?.dispose();
     this.interaction?.dispose();
     this.manager?.dispose();
     this.bus.clear();

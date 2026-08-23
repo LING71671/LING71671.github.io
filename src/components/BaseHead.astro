@@ -60,8 +60,8 @@ const jsonLd =
 {
   preloadDesk && (
     <>
-      <link rel="preload" as="fetch" href={withBase('/models/clock.glb')} fetchpriority="high" crossorigin="anonymous" />
-      <link rel="preload" as="fetch" href={withBase('/models/desk.glb')} fetchpriority="high" crossorigin="anonymous" />
+      <link rel="preload" as="fetch" href={withBase('/models/clock.glb')} fetchpriority="auto" crossorigin="anonymous" />
+      <link rel="preload" as="fetch" href={withBase('/models/desk.glb')} fetchpriority="low" crossorigin="anonymous" />
     </>
   )
 }

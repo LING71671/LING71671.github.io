@@ -5,11 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "astro dev",
-    "build": "astro build && node scripts/prune-legacy-fonts.mjs",
+    "build": "node scripts/verify-loader-posters.mjs && astro build && node scripts/prune-legacy-fonts.mjs",
     "preview": "astro preview",
     "check": "astro check",
     "test": "vitest run",
     "models": "pwsh scripts/export-glb.ps1",
+    "loader-posters": "node scripts/gen-loader-posters.mjs",
+    "loader-posters:check": "node scripts/verify-loader-posters.mjs",
     "parity": "node scripts/check-parity.mjs",
     "og": "node scripts/gen-og.mjs"
   },

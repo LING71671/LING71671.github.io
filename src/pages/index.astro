@@ -6,6 +6,7 @@ import { withBase } from '../lib/url';
 import { publishedPosts } from '../lib/archive';
 import { postHref } from '../lib/hotspots';
 import { fmtDate } from '../lib/url';
+import { SCENE_TIME_ANCHORS } from '../lib/scene-time-anchors';
 
 /*
  * 以下导入不直接渲染 —— 仅为把 partial 用到的组件样式带进首页 CSS 图，
@@ -20,6 +21,7 @@ import '../components/views/StatusView.astro';
 import '../components/views/StickyNotesView.astro';
 
 const latest = publishedPosts(await getCollection('posts')).slice(0, 3);
+const loaderTimeAnchors = JSON.stringify(SCENE_TIME_ANCHORS);
 ---
 
 <BaseLayout description={SITE.description} preloadDesk>
@@ -68,10 +70,123 @@ const latest = publishedPosts(await getCollection('posts')).slice(0, 3);
 
   {/* —— 3D 书桌 —— */}
   <div id="desk-root" aria-busy="true">
-    <div id="scene-loader" role="status" aria-live="polite">
-      <span class="scene-loader__dial" aria-hidden="true"></span>
-      <span class="scene-loader__label hand">正在点亮书桌</span>
+    <div
+      id="scene-loader"
+      role="status"
+      aria-live="polite"
+      data-loader-base={withBase('/images/loader')}
+      data-allow-time-override={import.meta.env.DEV ? 'true' : 'false'}
+      data-time-anchors={loaderTimeAnchors}
+    >
+      <div class="scene-loader__drift" aria-hidden="true">
+        <div class="scene-loader__poster scene-loader__poster--from"></div>
+        <div class="scene-loader__poster scene-loader__poster--to"></div>
+      </div>
+      <div class="scene-loader__atmosphere" aria-hidden="true"></div>
+      <div class="scene-loader__grain" aria-hidden="true"></div>
+      <span class="visually-hidden">正在准备书桌场景</span>
     </div>
+    <script is:inline>
+      (function () {
+        var loader = document.getElementById('scene-loader');
+        if (!loader) return;
+
+        var now = new Date();
+        var allowCaptureOverrides = loader.dataset.allowTimeOverride === 'true';
+        var debugParams = allowCaptureOverrides ? new URLSearchParams(location.search) : null;
+        if (debugParams) {
+          var debugTime = debugParams.get('time');
+          var match = debugTime && debugTime.match(/^([01]\d|2[0-3]):([0-5]\d)$/);
+          if (match) now.setHours(Number(match[1]), Number(match[2]), 0, 0);
+        }
+        var capturePose = debugParams && debugParams.get('poster');
+        if (capturePose !== 'entry' && capturePose !== 'home') capturePose = null;
+        if (capturePose) document.documentElement.classList.add('poster-capture');
+
+        var minute = now.getHours() * 60 + now.getMinutes();
+        var smooth = function (value) {
+          var t = Math.max(0, Math.min(1, value));
+          return t * t * (3 - 2 * t);
+        };
+        var anchors = JSON.parse(loader.dataset.timeAnchors || '[]');
+        var fromAnchor = anchors[0] || { minute: 0, moment: 'night' };
+        var toAnchor = anchors[1] || { minute: 1440, moment: 'night' };
+        for (var i = 0; i < anchors.length - 1; i += 1) {
+          if (minute >= anchors[i].minute && minute < anchors[i + 1].minute) {
+            fromAnchor = anchors[i];
+            toAnchor = anchors[i + 1];
+            break;
+          }
+        }
+        var from = fromAnchor.moment;
+        var to = toAnchor.moment;
+        var mix = smooth(
+          (minute - fromAnchor.minute) /
+            Math.max(1, toAnchor.minute - fromAnchor.minute),
+        );
+
+        var navigation = performance.getEntriesByType('navigation')[0];
+        var replayEntry = navigation && navigation.type === 'reload';
+        var completed = false;
+        try {
+          completed = !replayEntry && sessionStorage.getItem('desk.session.clockDone') === '1';
+        } catch (e) {
+          /* 隐私模式下按首次入口处理 */
+        }
+        var pose = capturePose || (completed ? 'home' : 'entry');
+        var base = loader.dataset.loaderBase || '/images/loader';
+        var preloaded = {};
+        var orientation = matchMedia('(orientation: portrait)');
+        var preload = function (url, priority) {
+          if (preloaded[url]) return;
+          preloaded[url] = true;
+          var link = document.createElement('link');
+          link.rel = 'preload';
+          link.as = 'image';
+          link.href = url;
+          link.setAttribute('fetchpriority', priority);
+          document.head.appendChild(link);
+        };
+        loader.dataset.pose = pose;
+
+        var applyLayout = function () {
+          var suffix = orientation.matches ? '-portrait' : '';
+          var source = function (moment) {
+            return base + '/' + pose + '-' + moment + suffix + '.webp';
+          };
+          var visibleFrom = from;
+          var visibleTo = to;
+          var visibleMix = mix;
+          // 临近锚点时只取一张，避免 opacity:0 的背景仍触发无效下载。
+          if (visibleMix <= 0.02) {
+            visibleTo = visibleFrom;
+            visibleMix = 0;
+          } else if (visibleMix >= 0.98) {
+            visibleFrom = visibleTo;
+            visibleMix = 0;
+          }
+          loader.dataset.moment =
+            visibleFrom === visibleTo ? visibleFrom : visibleFrom + '-' + visibleTo;
+          var fromUrl = source(visibleFrom);
+          var toUrl = source(visibleTo);
+          loader.style.setProperty('--loader-from-image', 'url("' + fromUrl + '")');
+          loader.style.setProperty('--loader-to-image', 'url("' + toUrl + '")');
+          loader.style.setProperty('--loader-mix', String(visibleMix));
+          preload(fromUrl, 'high');
+          if (toUrl !== fromUrl) preload(toUrl, visibleMix >= 0.25 ? 'high' : 'low');
+        };
+        var onOrientation = function () {
+          applyLayout();
+        };
+        applyLayout();
+        if (orientation.addEventListener) orientation.addEventListener('change', onOrientation);
+        else if (orientation.addListener) orientation.addListener(onOrientation);
+        loader.addEventListener('loader:dispose', function () {
+          if (orientation.removeEventListener) orientation.removeEventListener('change', onOrientation);
+          else if (orientation.removeListener) orientation.removeListener(onOrientation);
+        }, { once: true });
+      })();
+    </script>
     <canvas id="desk-canvas"></canvas>
     {/* CSS3D 屏幕系统层（ScreenOS 把 DOM 桌面贴进 3D 显示器；未聚焦时不拦截指针） */}
     <div id="screen-os-layer" aria-hidden="true"></div>
@@ -88,7 +203,7 @@ const latest = publishedPosts(await getCollection('posts')).slice(0, 3);
       </div>
     </div>
 
-    <button id="mute-btn" type="button" aria-label="环境音开关" aria-pressed="false">♪</button>
+    <button id="mute-btn" type="button" aria-label="环境音开关" aria-pressed="false" disabled>♪</button>
 
     <div id="overlay-backdrop" hidden></div>
     <section
@@ -131,6 +246,12 @@ const latest = publishedPosts(await getCollection('posts')).slice(0, 3);
   #panel[hidden],
   #overlay-backdrop[hidden],
   #toast[hidden] {
+    display: none !important;
+  }
+
+  /* 仅开发环境 ?poster=entry|home 捕获源帧：不把 HUD / 音频按钮烘进海报。 */
+  html.poster-capture #hud,
+  html.poster-capture #mute-btn {
     display: none !important;
   }
 
@@ -242,24 +363,22 @@ const latest = publishedPosts(await getCollection('posts')).slice(0, 3);
     background: #0e0a06;
   }
 
-  /* 只在完整场景首帧提交前出现；不泄露默认相机、孤立时钟或半套房间。 */
+  /*
+   * 加载层不是独立 UI，而是最终镜头的低带宽时间切片。
+   * WebGL 首帧到位后，从动画的当前矩阵收束到精确机位再交叉淡化。
+   */
   #scene-loader {
     position: absolute;
     inset: 0;
     z-index: 15;
-    display: grid;
-    place-content: center;
-    justify-items: center;
-    gap: var(--space-3);
-    background:
-      radial-gradient(circle at 50% 46%, rgb(78 52 24 / 0.24), transparent 28%),
-      #0e0a06;
-    color: #cbbd9f;
+    overflow: hidden;
+    contain: strict;
+    background: #0b0b0c;
     opacity: 1;
     visibility: visible;
     transition:
-      opacity var(--dur-slow) var(--ease-out),
-      visibility 0s linear var(--dur-slow);
+      opacity 1.15s cubic-bezier(0.22, 1, 0.36, 1),
+      visibility 0s linear 1.15s;
   }
 
   #desk-root.scene-ready #scene-loader {
@@ -267,58 +386,83 @@ const latest = publishedPosts(await getCollection('posts')).slice(0, 3);
     visibility: hidden;
   }
 
-  .scene-loader__dial {
-    position: relative;
-    width: 2.15rem;
-    aspect-ratio: 1;
-    border: 1px solid rgb(216 162 74 / 0.45);
-    border-radius: 50%;
-    box-shadow: inset 0 0 0 4px rgb(216 162 74 / 0.04);
-  }
-
-  .scene-loader__dial::before {
-    content: '';
+  .scene-loader__drift,
+  .scene-loader__poster,
+  .scene-loader__atmosphere,
+  .scene-loader__grain {
     position: absolute;
-    left: 50%;
-    top: 50%;
-    width: 0.28rem;
-    aspect-ratio: 1;
-    translate: -50% -50%;
-    border-radius: 50%;
-    background: #d8a24a;
+    inset: 0;
+    pointer-events: none;
   }
 
-  .scene-loader__dial::after {
-    content: '';
-    position: absolute;
-    left: calc(50% - 0.5px);
-    bottom: 50%;
-    width: 1px;
-    height: 31%;
-    background: #d8a24a;
-    transform-origin: 50% 100%;
-    animation: scene-loader-turn 1.8s linear infinite;
+  .scene-loader__drift {
+    inset: 0;
+    transform-origin: 50% 50%;
+    will-change: transform;
+    animation: scene-loader-drift 15s cubic-bezier(0.45, 0.05, 0.2, 1) infinite alternate;
+    transition: transform 1.15s cubic-bezier(0.22, 1, 0.36, 1);
   }
 
-  .scene-loader__label {
-    font-size: var(--text-sm);
-    letter-spacing: 0.05em;
+  .scene-loader__poster {
+    inset: 0;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: cover;
+    filter: blur(3px) brightness(0.82) saturate(0.92);
+    will-change: opacity, filter;
+    transition: filter 1.15s cubic-bezier(0.22, 1, 0.36, 1);
   }
 
-  @keyframes scene-loader-turn {
+  .scene-loader__poster--from {
+    background-image: var(--loader-from-image);
+  }
+
+  .scene-loader__poster--to {
+    background-image: var(--loader-to-image);
+    opacity: var(--loader-mix, 0);
+  }
+
+  .scene-loader__atmosphere {
+    inset: -12%;
+    background:
+      radial-gradient(ellipse at 28% 72%, rgb(218 151 78 / 0.16), transparent 36%),
+      linear-gradient(108deg, rgb(6 10 18 / 0.18), transparent 45%, rgb(231 183 113 / 0.08));
+    mix-blend-mode: soft-light;
+    opacity: 0.7;
+    will-change: transform, opacity;
+    animation: scene-loader-light 8s ease-in-out infinite alternate;
+  }
+
+  .scene-loader__grain {
+    opacity: 0.075;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.52'/%3E%3C/svg%3E");
+    mix-blend-mode: soft-light;
+  }
+
+  #scene-loader.is-revealing .scene-loader__poster {
+    filter: blur(0) brightness(1) saturate(1);
+  }
+
+  @keyframes scene-loader-drift {
+    0% {
+      transform: translate3d(-0.55%, 0.35%, 0) scale(1.035);
+    }
+    48% {
+      transform: translate3d(0.15%, -0.18%, 0) scale(1.047);
+    }
+    100% {
+      transform: translate3d(0.7%, -0.52%, 0) scale(1.055);
+    }
+  }
+
+  @keyframes scene-loader-light {
+    from {
+      opacity: 0.48;
+      transform: translate3d(-2.5%, 1%, 0) rotate(-0.5deg);
+    }
     to {
-      transform: rotate(1turn);
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    #scene-loader {
-      transition-duration: 1ms;
-    }
-
-    .scene-loader__dial::after {
-      animation: none;
-      transform: rotate(120deg);
+      opacity: 0.82;
+      transform: translate3d(2.5%, -1%, 0) rotate(0.5deg);
     }
   }
 
@@ -327,14 +471,37 @@ const latest = publishedPosts(await getCollection('posts')).slice(0, 3);
     inset: 0;
     width: 100%;
     height: 100%;
+    opacity: 0.001;
     transition:
+      opacity 1.05s cubic-bezier(0.22, 1, 0.36, 1),
       filter 0.4s var(--ease-out),
       transform 0.4s var(--ease-out);
+  }
+
+  #desk-root.scene-ready #desk-canvas {
+    opacity: 1;
   }
 
   #desk-canvas.blurred {
     filter: blur(9px) brightness(0.88);
     transform: scale(1.02);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #scene-loader,
+    #desk-canvas {
+      transition-duration: 180ms;
+    }
+
+    .scene-loader__drift,
+    .scene-loader__atmosphere {
+      animation: none;
+      transform: none;
+    }
+
+    .scene-loader__poster {
+      filter: brightness(0.9) saturate(0.95);
+    }
   }
 
   /* —— CSS3D 屏幕系统层：canvas 之上、HUD 之下 —— */
@@ -460,10 +627,10 @@ const latest = publishedPosts(await getCollection('posts')).slice(0, 3);
 
   #entry-ui {
     position: absolute;
-    left: 50%;
-    bottom: 14%;
-    translate: -50% 0;
-    text-align: center;
+    left: clamp(1.5rem, 4.5vw, 4.75rem);
+    bottom: clamp(2rem, 7vh, 4.75rem);
+    max-width: 22rem;
+    text-align: left;
     transition: opacity 0.6s ease;
   }
 
@@ -472,10 +639,11 @@ const latest = publishedPosts(await getCollection('posts')).slice(0, 3);
   }
 
   #entry-caption {
-    font-size: var(--text-xl);
-    color: #e9dcc2;
+    font-size: clamp(0.92rem, 1.25vw, 1.12rem);
+    color: rgb(233 220 194 / 0.86);
     text-shadow: 0 2px 12px rgb(0 0 0 / 0.6);
-    line-height: 1.8;
+    line-height: 1.9;
+    letter-spacing: 0.055em;
   }
 
   #entry-caption :global(strong) {
@@ -483,8 +651,8 @@ const latest = publishedPosts(await getCollection('posts')).slice(0, 3);
   }
 
   #entry-feedback {
-    margin-top: var(--space-3);
-    font-size: var(--text-base);
+    margin-top: var(--space-2);
+    font-size: var(--text-sm);
     color: var(--brass-bright);
     text-shadow: 0 1px 8px rgb(0 0 0 / 0.6);
   }
@@ -579,6 +747,14 @@ const latest = publishedPosts(await getCollection('posts')).slice(0, 3);
   }
 
   @media (max-width: 768px) {
+    #entry-ui {
+      left: max(1.25rem, env(safe-area-inset-left));
+      right: max(1.25rem, env(safe-area-inset-right));
+      bottom: max(3.25rem, calc(env(safe-area-inset-bottom) + 3rem));
+      max-width: none;
+      text-align: center;
+    }
+
     #panel {
       width: 100vw;
       height: 100dvh;

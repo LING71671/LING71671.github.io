@@ -47,35 +47,44 @@ describe('GLB embedded texture optimizer', () => {
     })
       .png()
       .toBuffer();
+    const hero = await sharp({
+      create: { width: 1400, height: 700, channels: 3, background: '#88735f' },
+    })
+      .png()
+      .toBuffer();
     const windowView = await sharp({
       create: { width: 1600, height: 800, channels: 3, background: '#27334d' },
     })
       .jpeg()
       .toBuffer();
     const secondOffset = align4(regular.length);
-    const binary = Buffer.alloc(secondOffset + windowView.length);
+    const thirdOffset = align4(secondOffset + hero.length);
+    const binary = Buffer.alloc(thirdOffset + windowView.length);
     regular.copy(binary, 0);
-    windowView.copy(binary, secondOffset);
+    hero.copy(binary, secondOffset);
+    windowView.copy(binary, thirdOffset);
 
     const json = {
       asset: { version: '2.0' },
       buffers: [{ byteLength: binary.length }],
       bufferViews: [
         { buffer: 0, byteOffset: 0, byteLength: regular.length },
-        { buffer: 0, byteOffset: secondOffset, byteLength: windowView.length },
+        { buffer: 0, byteOffset: secondOffset, byteLength: hero.length },
+        { buffer: 0, byteOffset: thirdOffset, byteLength: windowView.length },
       ],
       images: [
-        { name: 'wood_diff_1k', mimeType: 'image/png', bufferView: 0 },
-        { name: 'window_view', mimeType: 'image/jpeg', bufferView: 1 },
+        { name: 'wall_art', mimeType: 'image/png', bufferView: 0 },
+        { name: 'wood_table_normal_1k', mimeType: 'image/png', bufferView: 1 },
+        { name: 'window_view', mimeType: 'image/jpeg', bufferView: 2 },
       ],
-      textures: [{ source: 0 }, { source: 1 }],
+      textures: [{ source: 0 }, { source: 1 }, { source: 2 }],
     };
     await writeFile(path, makeGlb(json, binary));
 
     const result = await transcodeEmbeddedTextures(path);
     const verified = await verifyEmbeddedTextures(path);
-    expect(result.count).toBe(2);
-    expect(verified.count).toBe(2);
+    expect(result.count).toBe(3);
+    expect(verified.count).toBe(3);
     expect(result.afterBytes).toBeLessThan(result.beforeBytes);
 
     const glb = await readFile(path);
@@ -85,11 +94,13 @@ describe('GLB embedded texture optimizer', () => {
     expect(outputJson.textures).toEqual([
       { extensions: { EXT_texture_webp: { source: 0 } } },
       { extensions: { EXT_texture_webp: { source: 1 } } },
+      { extensions: { EXT_texture_webp: { source: 2 } } },
     ]);
 
     const binaryStart = 20 + jsonLength + 8;
     const regularView = outputJson.bufferViews[0];
-    const windowViewBuffer = outputJson.bufferViews[1];
+    const heroView = outputJson.bufferViews[1];
+    const windowViewBuffer = outputJson.bufferViews[2];
     const regularMeta = await sharp(
       glb.subarray(
         binaryStart + regularView.byteOffset,
@@ -102,7 +113,14 @@ describe('GLB embedded texture optimizer', () => {
         binaryStart + windowViewBuffer.byteOffset + windowViewBuffer.byteLength,
       ),
     ).metadata();
+    const heroMeta = await sharp(
+      glb.subarray(
+        binaryStart + heroView.byteOffset,
+        binaryStart + heroView.byteOffset + heroView.byteLength,
+      ),
+    ).metadata();
     expect([regularMeta.width, regularMeta.height]).toEqual([512, 256]);
+    expect([heroMeta.width, heroMeta.height]).toEqual([1024, 512]);
     expect([windowMeta.width, windowMeta.height]).toEqual([1024, 512]);
   });
 });

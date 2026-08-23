@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { TweenRunner } from '../utils/tween';
 import type { QualityTier } from '../../scripts/desk/storage';
+import { PostProcessingPipeline } from '../rendering/PostProcessingPipeline';
+import { renderQualityProfile } from '../rendering/quality';
 
 /**
  * 渲染器与按需渲染循环。
@@ -19,6 +21,7 @@ export class SceneManager {
   readonly scene = new THREE.Scene();
   readonly camera: THREE.PerspectiveCamera;
   readonly tweens = new TweenRunner();
+  private readonly pipeline: PostProcessingPipeline;
 
   private needsRender = true;
   private updaters = new Set<Updater>();
@@ -36,12 +39,14 @@ export class SceneManager {
       powerPreference: 'high-performance',
     });
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.shadowMap.autoUpdate = false;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.AgXToneMapping;
     this.renderer.toneMappingExposure = 1.0;
 
     this.camera = new THREE.PerspectiveCamera(42, 1, 0.05, 20);
+    this.pipeline = new PostProcessingPipeline(this.renderer, this.scene, this.camera);
 
     const onLost = (e: Event) => {
       e.preventDefault();
@@ -54,8 +59,10 @@ export class SceneManager {
 
   setQuality(tier: QualityTier): void {
     const dpr = window.devicePixelRatio || 1;
-    const cap = tier === 'low' ? 1 : tier === 'mid' ? 1.5 : 2;
+    const cap = renderQualityProfile(tier).dprCap;
     this.renderer.setPixelRatio(Math.min(dpr, cap));
+    this.pipeline.setQuality(tier);
+    this.pipeline.setPixelRatio(this.renderer.getPixelRatio());
     this.resize();
   }
 
@@ -63,6 +70,7 @@ export class SceneManager {
     const { clientWidth: w, clientHeight: h } = this.canvas;
     if (w === 0 || h === 0) return;
     this.renderer.setSize(w, h, false);
+    this.pipeline.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.invalidate();
@@ -119,7 +127,7 @@ export class SceneManager {
 
       if (this.needsRender && !this.renderPaused) {
         this.needsRender = false;
-        this.renderer.render(this.scene, this.camera);
+        this.pipeline.render(dt);
         if (this.afterRender.size > 0) {
           const waiters = [...this.afterRender];
           this.afterRender.clear();
@@ -135,6 +143,7 @@ export class SceneManager {
     cancelAnimationFrame(this.rafId);
     for (const resolve of this.afterRender) resolve();
     this.afterRender.clear();
+    this.pipeline.dispose();
     this.renderer.dispose();
   }
 }

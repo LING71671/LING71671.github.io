@@ -8,3 +8,4 @@ dist/
 .env.*
 public/models/*.raw.glb
 .reasonix/
+output/

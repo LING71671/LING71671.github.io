@@ -9,8 +9,8 @@ dev 下访问 `/?placeholder=1` 可与占位场景对比调试）。
 
 | 文件 | 内容 | 预算 | 当前 |
 |---|---|---|---|
-| `public/models/clock.glb` | 时钟（入口先行加载） | < 300KB | ~41KB |
-| `public/models/desk.glb` | 书桌、房间与其余物件 | < 4MB | ~102KB |
+| `public/models/clock.glb` | 时钟（入口先行加载） | < 300KB | ~151KB |
+| `public/models/desk.glb` | 书桌、房间与其余物件 | < 4MB | ~2.45MB |
 
 ## 坐标与单位
 
@@ -47,20 +47,31 @@ dev 下访问 `/?placeholder=1` 可与占位场景对比调试）。
 
 ## 材质要求
 
-- PBR metal-rough；**禁 transmission / clearcoat / sheen**
+- PBR metal-rough；关键大表面（`wood_desk` / `wood_floor` / `wallpaper` / `linen` /
+  `rug` / `wainscot`）必须同时带 `normalTexture`、共享 ORM 的
+  `metallicRoughnessTexture` 与 `occlusionTexture`
+- 禁 transmission；clearcoat / sheen 只允许在确有物理含义的材质上少量使用：
+  漆木、黄铜、陶瓷釉与亚麻，不得把所有材质升级成 `MeshPhysicalMaterial`
 - 运行时按 emissiveIntensity 调控的材质（灯泡 / 屏幕 / 刻度）会在导入后被
   `AssetLoader.prepare()` 显式重设 emissive 颜色 —— 建模侧只需保证**材质独立不共享**
-- 面数预算 ≤ 60k 三角（当前 ~15k）；贴图可选（当前纯色材质 + 运行时 Canvas 屏幕贴图）
+- 场景面数预算 ≤ 65k 三角（当前约 50k），draw call ≤ 160；背景盆栽 ≤18k、
+  书架书本 ≤8k，禁止小背景物重新吃掉大部分几何预算
+- 桌木与亚麻的 base color / normal 可保留 1K；其 ORM 与其余大表面 512，窗景 1K；
+  WebP 解码后的估算纹理显存（RGBA8 + mipmaps）≤84MB
+- 桌面、抽屉面和搁板木纹必须按真实尺寸投影，约 0.5m/tile，纹理方向与构件长轴一致；
+  禁止沿用 Blender 默认 cube atlas 把整个桌面压进约 1/16 张贴图
 
 ## 导出（Blender）
 
-- glb、+Y up（默认）、Apply Modifiers；不含灯光/相机（光照全代码驱动）
+- glb、+Y up（默认）、Apply Modifiers；关键大表面的法线贴图网格导出 tangent；不含灯光/相机
+  （光照全代码驱动）
 - 静态件 Apply All Transforms；可动件（指针/抽屉/灯头）保留正确 origin；禁负缩放
 - 无头一键：`pwsh scripts/export-glb.ps1`（Blender 位于 `E:\Blender`）
 
 ## 压缩（scripts/optimize-gltf.mjs）
 
-`gltf-transform optimize --compress meshopt`，但**必须**保留以下开关（血泪教训）：
+管线为 `dedup → prune → WebP/分级缩放 → quantize → meshopt`，并在末尾验收
+文件体积、三角面、draw call、关键 PBR 槽与纹理显存。必须保留以下约束：
 
 - `--join false --flatten false`：合并/拍扁会毁掉命名契约节点
 - `--palette false`：调色板化会重写 UV 指向单像素，毁掉运行时贴图槽

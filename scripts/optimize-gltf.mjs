@@ -27,8 +27,9 @@ const JSON_CHUNK = 0x4e4f534a;
 const BIN_CHUNK = 0x004e4942;
 const WEBP_EXTENSION = 'EXT_texture_webp';
 const DEFAULT_TEXTURE_LIMIT = 512;
+const HERO_TEXTURE_LIMIT = 1024;
 const WINDOW_TEXTURE_LIMIT = 1024;
-const WEBP_QUALITY = 82;
+const WEBP_QUALITY = 88;
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const GLTF_TRANSFORM_CLI = join(
   PROJECT_ROOT,
@@ -116,9 +117,14 @@ function imageLabel(image, index) {
 }
 
 function textureLimit(image, index) {
-  return /window[_-]?view/iu.test(imageLabel(image, index))
-    ? WINDOW_TEXTURE_LIMIT
-    : DEFAULT_TEXTURE_LIMIT;
+  const label = imageLabel(image, index);
+  if (/window[_-]?view/iu.test(label)) return WINDOW_TEXTURE_LIMIT;
+  // 占据主画面的表面保留 1K；其余小道具继续 512，预算投给用户真正看得见的地方。
+  const packedOrScalar = /(?:^|[_-])orm(?:[_-]|$)|roughness|metallic/iu.test(label);
+  if (/wood[_-]?table|linen/iu.test(label) && !packedOrScalar) {
+    return HERO_TEXTURE_LIMIT;
+  }
+  return DEFAULT_TEXTURE_LIMIT;
 }
 
 function imageBytes(json, binary, image, source) {
@@ -270,6 +276,7 @@ export async function verifyEmbeddedTextures(path) {
   const images = json.images ?? [];
   const failures = [];
   let totalBytes = 0;
+  let gpuBytes = 0;
 
   for (const [index, image] of images.entries()) {
     const label = imageLabel(image, index);
@@ -287,6 +294,10 @@ export async function verifyEmbeddedTextures(path) {
         failures.push(`${label}: 无法读取尺寸`);
       } else if (metadata.width > limit || metadata.height > limit) {
         failures.push(`${label}: ${metadata.width}x${metadata.height} 超过 ${limit}px`);
+      }
+      if (metadata.width && metadata.height) {
+        // WebP 只省网络；浏览器上传 GPU 后约为 RGBA8 + mipmaps（4/3）。
+        gpuBytes += metadata.width * metadata.height * 4 * (4 / 3);
       }
     } catch (error) {
       failures.push(`${label}: ${error instanceof Error ? error.message : String(error)}`);
@@ -311,7 +322,59 @@ export async function verifyEmbeddedTextures(path) {
   if (failures.length > 0) {
     throw new Error(`${path}: 贴图验收失败\n- ${failures.join('\n- ')}`);
   }
-  return { count: images.length, totalBytes };
+  return { count: images.length, totalBytes, gpuBytes };
+}
+
+/** 验收可见质量与实时预算，防止以后再次把多边形花在背景小物上。 */
+export function verifyModelQuality(path, file = '') {
+  const { json } = parseGlb(readFileSync(path), path);
+  const meshInstances = new Map();
+  for (const node of json.nodes ?? []) {
+    if (!Number.isInteger(node.mesh)) continue;
+    meshInstances.set(node.mesh, (meshInstances.get(node.mesh) ?? 0) + 1);
+  }
+
+  let triangles = 0;
+  let drawCalls = 0;
+  for (const [meshIndex, mesh] of (json.meshes ?? []).entries()) {
+    const instances = meshInstances.get(meshIndex) ?? 0;
+    for (const primitive of mesh.primitives ?? []) {
+      const accessorIndex = Number.isInteger(primitive.indices)
+        ? primitive.indices
+        : primitive.attributes?.POSITION;
+      const count = json.accessors?.[accessorIndex]?.count ?? 0;
+      triangles += (count / 3) * instances;
+      drawCalls += instances;
+    }
+  }
+
+  const failures = [];
+  if (file === 'desk.glb') {
+    if (triangles > 65_000) failures.push(`${triangles} tris 超过 65k 场景预算`);
+    if (drawCalls > 160) failures.push(`${drawCalls} draw calls 超过 160 预算`);
+    const requiredPbr = ['wood_desk', 'wood_floor', 'wallpaper', 'linen', 'rug', 'wainscot'];
+    for (const name of requiredPbr) {
+      const material = (json.materials ?? []).find((entry) => entry.name === name);
+      if (!material) {
+        failures.push(`缺少关键材质 ${name}`);
+        continue;
+      }
+      const pbr = material.pbrMetallicRoughness ?? {};
+      if (!Number.isInteger(material.normalTexture?.index)) {
+        failures.push(`${name} 缺少 normalTexture`);
+      }
+      if (!Number.isInteger(pbr.metallicRoughnessTexture?.index)) {
+        failures.push(`${name} 缺少 metallicRoughnessTexture`);
+      }
+      if (!Number.isInteger(material.occlusionTexture?.index)) {
+        failures.push(`${name} 缺少 occlusionTexture`);
+      }
+    }
+  }
+  if (failures.length > 0) {
+    throw new Error(`${path}: 模型质量验收失败\n- ${failures.join('\n- ')}`);
+  }
+  return { triangles, drawCalls, materials: json.materials?.length ?? 0 };
 }
 
 function runGltfTransform(args) {
@@ -355,6 +418,11 @@ export async function optimizeModels(directory, { backup = true } = {}) {
           `${(textures.afterBytes / 1024).toFixed(0)}KB`,
       );
     }
+    if (file === 'desk.glb' && verified.gpuBytes > 84 * 1024 * 1024) {
+      throw new Error(
+        `${file}: 估算纹理显存 ${(verified.gpuBytes / 1024 / 1024).toFixed(1)}MB 超过 84MB`,
+      );
+    }
 
     // 3) 量化：法线/UV 提高到 12/14 位，避免纸面反射斜纹伪影。
     runGltfTransform([
@@ -376,6 +444,7 @@ export async function optimizeModels(directory, { backup = true } = {}) {
 
     // meshopt 写回后再验一次图片引用，防止后续步骤破坏扩展。
     await verifyEmbeddedTextures(path);
+    const quality = verifyModelQuality(path, file);
     const after = statSync(path).size;
     const budget = budgets.get(file);
     if (budget && after > budget) {
@@ -383,7 +452,10 @@ export async function optimizeModels(directory, { backup = true } = {}) {
         `${file}: ${(after / 1024).toFixed(0)}KB 超出预算 ${(budget / 1024).toFixed(0)}KB`,
       );
     }
-    console.log(`${file}: ${(before / 1024).toFixed(0)}KB -> ${(after / 1024).toFixed(0)}KB`);
+    console.log(
+      `${file}: ${(before / 1024).toFixed(0)}KB -> ${(after / 1024).toFixed(0)}KB, ` +
+        `${Math.round(quality.triangles).toLocaleString()} tris, ${quality.drawCalls} draws`,
+    );
   }
 }
 

@@ -43,8 +43,9 @@ export class NodeRegistry {
       }
     }
 
-    // 指针 pivot 检查：绕局部 Z 旋转 90° 后，网格端点应绕原点转动。
-    // 这里做轻量近似：指针几何在局部 +Y 方向应有延伸，-Y 方向延伸应很小。
+    // 指针 pivot 检查：几何在指针契约节点的局部 +Y 方向应有延伸，
+    // -Y 方向只允许短尾部。必须在局部坐标里检查；进入场景后 ClockController
+    // 会立即把指针旋到当前时间，用世界 AABB 判断会随时间产生误报。
     for (const handName of [
       NODES.clockHandHour,
       NODES.clockHandMinute,
@@ -52,11 +53,28 @@ export class NodeRegistry {
     ]) {
       const hand = this.nodes.get(handName);
       if (!hand) continue;
-      const box = new THREE.Box3().setFromObject(hand);
-      const local = box.clone();
-      // 转到指针局部系近似判断（假设无旋转基线，导出时指向 12 点即局部 +Y）
-      const posY = local.max.y - hand.getWorldPosition(new THREE.Vector3()).y;
-      const negY = hand.getWorldPosition(new THREE.Vector3()).y - local.min.y;
+      hand.updateWorldMatrix(true, true);
+      const handWorldInverse = hand.matrixWorld.clone().invert();
+      const local = new THREE.Box3().makeEmpty();
+      const relativeMatrix = new THREE.Matrix4();
+
+      hand.traverse((obj) => {
+        if (!(obj instanceof THREE.Mesh)) return;
+        const geometry = obj.geometry;
+        if (!geometry.boundingBox) geometry.computeBoundingBox();
+        if (!geometry.boundingBox) return;
+
+        relativeMatrix.multiplyMatrices(handWorldInverse, obj.matrixWorld);
+        local.union(geometry.boundingBox.clone().applyMatrix4(relativeMatrix));
+      });
+
+      if (local.isEmpty()) {
+        problems.push(`${handName}: 指针节点下没有可校验的网格`);
+        continue;
+      }
+
+      const posY = local.max.y;
+      const negY = -local.min.y;
       if (posY <= 0) {
         problems.push(`${handName}: 指针应从原点向局部 +Y（12 点方向）延伸`);
       } else if (negY > posY * 0.5) {

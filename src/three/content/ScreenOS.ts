@@ -113,6 +113,10 @@ const SOS_CSS = `
   --sos-bg-hi:#251d0f;--sos-bg:#18120a;--sos-bg-lo:#0f0c06;
   --sos-text:#e0d2b0;--sos-dim:#95815c;--sos-accent:#d8a24a;
 }
+.sos-root.loader-handoff{
+  --sos-bg-hi:#2b2213;--sos-bg:#1d1710;--sos-bg-lo:#131009;
+  --sos-text:#ece1c4;--sos-dim:#a8946c;--sos-accent:#c9a45c;
+}
 .sos-glare{
   position:absolute;inset:0;pointer-events:none;z-index:9;border-radius:6px;
   background:linear-gradient(112deg,rgba(255,246,224,0.05) 0%,rgba(255,246,224,0.015) 30%,transparent 46%);
@@ -126,7 +130,12 @@ const SOS_CSS = `
 .sos-dots i:nth-child(2){background:#97794a}
 .sos-dots i:nth-child(3){background:#645130}
 .sos-brand{font-size:15px;font-weight:600;letter-spacing:0.14em;color:var(--sos-text)}
-.sos-time{margin-left:auto;font-size:15px;color:var(--sos-dim);letter-spacing:0.04em;font-variant-numeric:tabular-nums}
+.sos-time{
+  margin-left:auto;font-size:15px;color:var(--sos-dim);letter-spacing:0.04em;
+  font-variant-numeric:tabular-nums;opacity:1;
+  transition:opacity .45s cubic-bezier(.22,1,.36,1);
+}
+.sos-root.loader-handoff .sos-time{opacity:0}
 .sos-desktop{
   flex:1;padding:34px 42px;min-height:0;
   display:grid;grid-template-rows:repeat(3,max-content);grid-auto-flow:column;
@@ -185,6 +194,7 @@ const SOS_CSS = `
 @media (prefers-reduced-motion: reduce){
   .sos-window{animation:none}
   .sos-skel i{animation:none}
+  .sos-time{transition:none}
 }
 `;
 
@@ -204,6 +214,7 @@ export class ScreenOS {
   private focused = false;
   private disposed = false;
   private prefetched = false;
+  private loaderHandoff = true;
 
   private cssRenderer: CSS3DRenderer | null = null;
   private cssScene = new THREE.Scene();
@@ -374,6 +385,14 @@ export class ScreenOS {
     this.manager.invalidate();
   }
 
+  /** 海报与首帧共用无日期时间的中性屏幕；遮罩移除后再淡入实时内容。 */
+  releaseLoaderHandoff(): void {
+    if (!this.loaderHandoff) return;
+    this.loaderHandoff = false;
+    this.root?.classList.remove('loader-handoff');
+    this.manager.invalidate();
+  }
+
   /** 聚焦态开关：开启 DOM 交互与 Esc 退出 */
   setFocused(on: boolean): void {
     if (!this.ready || !this.root || this.focused === on) return;
@@ -429,6 +448,7 @@ export class ScreenOS {
   private buildDom(pxH: number): HTMLDivElement {
     const root = document.createElement('div');
     root.className = 'sos-root';
+    root.classList.toggle('loader-handoff', this.loaderHandoff);
     root.style.width = `${PX_W}px`;
     root.style.height = `${pxH}px`;
     root.inert = true;

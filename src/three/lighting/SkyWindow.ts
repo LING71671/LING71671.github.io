@@ -1,20 +1,21 @@
 import * as THREE from 'three';
 import { LAYOUT } from '../config/layout';
+import type { LightingValues } from './presets';
 
 /**
- * 窗外天空：CanvasTexture 垂直渐变面片，贴在窗后。
- * 仅昼夜混合值明显变化时重绘（非每帧）。
+ * 窗外天空兜底。真实山景贴图尚未到位或加载失败时，仍按同一四时时间线绘制，
+ * 不会闪回统一的蓝色渐变。只有量化后的色板变化时才重绘。
  */
 export class SkyWindow {
   readonly mesh: THREE.Mesh;
   private texture: THREE.CanvasTexture;
   private canvas: HTMLCanvasElement;
-  private lastBlend = -1;
+  private lastKey = '';
 
   constructor(scene: THREE.Scene) {
     this.canvas = document.createElement('canvas');
-    this.canvas.width = 64;
-    this.canvas.height = 128;
+    this.canvas.width = 192;
+    this.canvas.height = 256;
     this.texture = new THREE.CanvasTexture(this.canvas);
     this.texture.colorSpace = THREE.SRGBColorSpace;
 
@@ -22,55 +23,77 @@ export class SkyWindow {
       map: this.texture,
       toneMapped: false,
     });
-    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 2.0), material);
+    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 2), material);
     this.mesh.name = 'sky_window';
     this.mesh.position.set(LAYOUT.window.x, LAYOUT.window.y, LAYOUT.wallZ - 0.4);
     scene.add(this.mesh);
-    this.setBlend(1);
   }
 
-  /** blend: 0 夜 – 1 昼 */
-  setBlend(blend: number): void {
-    const q = Math.round(blend * 24) / 24;
-    if (q === this.lastBlend) return;
-    this.lastBlend = q;
+  setLighting(values: LightingValues): void {
+    const key = [
+      values.skyTop.getHexString(),
+      values.skyMid.getHexString(),
+      values.skyBottom.getHexString(),
+      values.skyGlow.getHexString(),
+      Math.round(values.skyGlowI * 24),
+      Math.round(values.stars * 12),
+      Math.round(values.sunPosition.x * 4),
+      Math.round(values.sunPosition.y * 4),
+    ].join(':');
+    if (key === this.lastKey) return;
+    this.lastKey = key;
 
-    const ctx = this.canvas.getContext('2d')!;
-    const h = this.canvas.height;
-    const grad = ctx.createLinearGradient(0, 0, 0, h);
+    const ctx = this.canvas.getContext('2d');
+    if (!ctx) return;
+    const { width, height } = this.canvas;
+    const gradient = ctx.createLinearGradient(0, 0, 0, height);
+    gradient.addColorStop(0, values.skyTop.getStyle());
+    gradient.addColorStop(0.56, values.skyMid.getStyle());
+    gradient.addColorStop(1, values.skyBottom.getStyle());
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, width, height);
 
-    const lerpHex = (a: number[], b: number[], t: number) =>
-      `rgb(${a.map((v, i) => Math.round(v + (b[i]! - v) * t)).join(',')})`;
-
-    const nightTop = [15, 20, 32];
-    const nightBottom = [42, 33, 51];
-    const dayTop = [156, 196, 224];
-    const dayBottom = [244, 232, 207];
-
-    grad.addColorStop(0, lerpHex(nightTop, dayTop, q));
-    grad.addColorStop(1, lerpHex(nightBottom, dayBottom, q));
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, this.canvas.width, h);
-
-    if (q > 0.55) {
-      // 日间：太阳光晕
-      const glow = ctx.createRadialGradient(46, 34, 2, 46, 34, 22);
-      glow.addColorStop(0, `rgba(255, 244, 214, ${0.95 * q})`);
-      glow.addColorStop(1, 'rgba(255, 244, 214, 0)');
+    if (values.skyGlowI > 0.01) {
+      const gx = THREE.MathUtils.mapLinear(values.sunPosition.x, -4, 4, width * 0.12, width * 0.88);
+      const gy = THREE.MathUtils.mapLinear(
+        THREE.MathUtils.clamp(values.sunPosition.y, 0, 4.5),
+        0,
+        4.5,
+        height * 0.78,
+        height * 0.2,
+      );
+      const radius = width * (0.16 + values.skyGlowI * 0.22);
+      const glow = ctx.createRadialGradient(gx, gy, 1, gx, gy, radius);
+      const glowColor = values.skyGlow.clone();
+      const rgb = glowColor
+        .toArray()
+        .map((v) => Math.round(THREE.MathUtils.clamp(v, 0, 1) * 255));
+      glow.addColorStop(0, `rgba(${rgb.join(',')},${Math.min(0.92, values.skyGlowI)})`);
+      glow.addColorStop(0.35, `rgba(${rgb.join(',')},${values.skyGlowI * 0.3})`);
+      glow.addColorStop(1, `rgba(${rgb.join(',')},0)`);
       ctx.fillStyle = glow;
-      ctx.fillRect(0, 0, this.canvas.width, h);
-    } else if (q < 0.3) {
-      // 夜间：月亮与星
-      ctx.fillStyle = `rgba(240, 236, 220, ${0.9 * (1 - q * 3)})`;
-      ctx.beginPath();
-      ctx.arc(44, 28, 5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = `rgba(255,255,255,${0.5 * (1 - q * 3)})`;
-      for (const [x, y] of [[12, 18], [26, 44], [52, 60], [18, 76], [38, 12]]) {
-        ctx.fillRect(x!, y!, 1, 1);
+      ctx.fillRect(0, 0, width, height);
+    }
+
+    if (values.stars > 0.02) {
+      const stars: Array<[number, number, number]> = [
+        [0.08, 0.1, 0.8], [0.19, 0.24, 0.45], [0.29, 0.08, 0.6],
+        [0.41, 0.19, 0.35], [0.56, 0.11, 0.7], [0.7, 0.27, 0.42],
+        [0.83, 0.08, 0.52], [0.91, 0.31, 0.3], [0.34, 0.37, 0.4],
+      ];
+      for (const [x, y, alpha] of stars) {
+        ctx.fillStyle = `rgba(235,240,246,${values.stars * alpha})`;
+        ctx.fillRect(Math.round(x * width), Math.round(y * height), 1, 1);
       }
     }
 
     this.texture.needsUpdate = true;
+  }
+
+  dispose(): void {
+    this.mesh.geometry.dispose();
+    (this.mesh.material as THREE.Material).dispose();
+    this.texture.dispose();
+    this.mesh.removeFromParent();
   }
 }

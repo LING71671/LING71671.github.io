@@ -4,7 +4,10 @@ import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { NODES } from '../config/naming';
 import { LAYOUT } from '../config/layout';
 import { createScreenTexture } from '../placeholder/PlaceholderDesk';
-import { mountCalendarFace } from '../content/CalendarFace';
+import {
+  mountCalendarFace,
+  type CalendarFaceHandle,
+} from '../content/CalendarFace';
 
 /**
  * GLTF 单项加载器。调用方把 clock.glb + desk.glb 视作原子资产组，
@@ -34,7 +37,11 @@ export class AssetLoader {
    * 导入后处理：阴影标记、运行时控制材质的确定性修正、
    * 补齐可选的分针命中代理。占位与 GLTF 共享同一命名契约。
    */
-  static prepare(root: THREE.Object3D, invalidate: () => void = () => {}): void {
+  static prepare(
+    root: THREE.Object3D,
+    invalidate: () => void = () => {},
+  ): CalendarFaceHandle | null {
+    let calendarFace: CalendarFaceHandle | null = null;
     root.traverse((obj) => {
       if (!(obj instanceof THREE.Mesh)) return;
       const name = obj.name;
@@ -74,16 +81,29 @@ export class AssetLoader {
         material.dispose();
       } else if (name === NODES.calendarFace) {
         // 台历正面：GitHub 提交记录热力格（运行时绘制）
-        mountCalendarFace(obj, invalidate);
+        calendarFace = mountCalendarFace(obj, invalidate);
       } else if (name === 'clock_ticks') {
         material.emissive.setHex(0xc9a45c);
         material.emissiveIntensity = 0;
       } else if (isGlass) {
-        material.transparent = true;
-        material.opacity = Math.min(material.opacity, 0.14);
-        material.depthWrite = false;
+        // 四顶点玻璃用 PBR 高光时，两个三角面会因透明排序 / 屏幕空间
+        // 反射形成明显对角拼缝。窗景已经承担主要视觉，玻璃只保留一层
+        // 均匀的冷色薄膜，完全避开逐三角光照。
+        const glass = new THREE.MeshBasicMaterial({
+          color: 0x9fb4c3,
+          transparent: true,
+          opacity: 0.035,
+          depthWrite: false,
+          side: THREE.FrontSide,
+          toneMapped: false,
+        });
+        glass.forceSinglePass = true;
+        obj.material = glass;
+        material.dispose();
+        obj.receiveShadow = false;
       }
     });
+    return calendarFace;
   }
 
   /**

@@ -57,6 +57,20 @@ async function run(): Promise<void> {
   if (!canvas) return;
   const deskRoot = $('desk-root');
   const sceneLoader = $('scene-loader');
+  const capturePoseParam = import.meta.env.DEV
+    ? new URLSearchParams(location.search).get('poster')
+    : null;
+  const posterCapturePose =
+    capturePoseParam === 'entry' || capturePoseParam === 'home' ? capturePoseParam : null;
+
+  // 网络或 GPU 初始化若永久 pending，30 秒后恢复语义首页，不能把用户困在封面里。
+  let bootTimedOut = false;
+  const bootWatchdog = window.setTimeout(() => {
+    bootTimedOut = true;
+    sceneLoader?.dispatchEvent(new Event('loader:dispose'));
+    deskRoot?.setAttribute('aria-busy', 'false');
+    degrade();
+  }, 30_000);
 
   // 刷新 → 重新体验入口（会话标记清除）
   const navEntry = performance.getEntriesByType('navigation')[0] as
@@ -68,7 +82,13 @@ async function run(): Promise<void> {
   try {
     mod = await import('../../three/main');
   } catch {
+    window.clearTimeout(bootWatchdog);
+    sceneLoader?.dispatchEvent(new Event('loader:dispose'));
     degrade();
+    return;
+  }
+  if (bootTimedOut) {
+    sceneLoader?.dispatchEvent(new Event('loader:dispose'));
     return;
   }
 
@@ -219,21 +239,60 @@ async function run(): Promise<void> {
 
   // 完整资产、最终相机/光照和第一张 WebGL 帧都就绪后，才一次性揭示场景。
   let sceneRevealed = false;
+  const releaseRealtimeState = (): void => {
+    if (!posterCapturePose) api.releaseLoaderHandoff();
+  };
   const revealScene = (): void => {
-    if (sceneRevealed) return;
+    if (sceneRevealed || bootTimedOut) return;
     sceneRevealed = true;
-    deskRoot?.classList.add('scene-ready');
-    deskRoot?.setAttribute('aria-busy', 'false');
-    if (!sceneLoader) return;
-    sceneLoader.addEventListener(
-      'transitionend',
-      (event) => {
-        if (event.propertyName === 'opacity') sceneLoader.remove();
-      },
-      { once: true },
-    );
+    if (!sceneLoader) {
+      deskRoot?.classList.add('scene-ready');
+      deskRoot?.setAttribute('aria-busy', 'false');
+      muteBtn?.removeAttribute('disabled');
+      releaseRealtimeState();
+      return;
+    }
+
+    // 加载层可在任意漂移相位被打断：先冻结当前矩阵，再用同一段缓动归位，
+    // 与已提交的 WebGL 首帧交叉淡化，避免循环动画突然跳回起点。
+    const drift = sceneLoader.querySelector<HTMLElement>('.scene-loader__drift');
+    if (drift && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      const currentTransform = getComputedStyle(drift).transform;
+      drift.style.animation = 'none';
+      drift.style.transition = 'none';
+      drift.style.transform = currentTransform === 'none' ? 'none' : currentTransform;
+      void drift.offsetWidth;
+      drift.style.transition = '';
+    }
+
+    let handoffStarted = false;
+    const startHandoff = (): void => {
+      if (handoffStarted) return;
+      handoffStarted = true;
+      sceneLoader.classList.add('is-revealing');
+      if (drift) drift.style.transform = 'none';
+      deskRoot?.classList.add('scene-ready');
+    };
+    requestAnimationFrame(startHandoff);
+    const removeSceneLoader = (): void => {
+      if (!sceneLoader.isConnected) return;
+      // rAF 可能在后台标签页中被挂起；兜底收口必须同时揭示 canvas。
+      startHandoff();
+      deskRoot?.setAttribute('aria-busy', 'false');
+      muteBtn?.removeAttribute('disabled');
+      sceneLoader.dispatchEvent(new Event('loader:dispose'));
+      sceneLoader.remove();
+      releaseRealtimeState();
+    };
+    const finishReveal = (event: TransitionEvent): void => {
+      // 子层的 filter / transform 也会冒泡，只有加载层自身的 opacity 才代表交接完成。
+      if (event.target !== sceneLoader || event.propertyName !== 'opacity') return;
+      sceneLoader.removeEventListener('transitionend', finishReveal);
+      removeSceneLoader();
+    };
+    sceneLoader.addEventListener('transitionend', finishReveal);
     // 页面恢复、降动效或浏览器跳过 transitionend 时的收口。
-    window.setTimeout(() => sceneLoader.remove(), 800);
+    window.setTimeout(removeSceneLoader, 1600);
   };
   api.on('scene:ready', revealScene);
 
@@ -258,7 +317,12 @@ async function run(): Promise<void> {
     showToast(next ? '环境音已关闭' : '环境音已开启', 1400);
   });
 
-  const skipEntry = isClockDoneThisSession();
+  const skipEntry =
+    posterCapturePose === 'home'
+      ? true
+      : posterCapturePose === 'entry'
+        ? false
+        : isClockDoneThisSession();
   if (skipEntry) {
     entryUi?.remove();
     vignette?.remove();
@@ -271,9 +335,17 @@ async function run(): Promise<void> {
       lamp: window.deskTheme?.getLamp() ?? 'ambient',
       muted: initialMuted,
     });
+    window.clearTimeout(bootWatchdog);
+    if (bootTimedOut) {
+      api.dispose();
+      return;
+    }
     // 事件监听是主路径；这里保证未来实现变更也不会让加载层永久滞留。
     revealScene();
   } catch {
+    window.clearTimeout(bootWatchdog);
+    sceneLoader?.dispatchEvent(new Event('loader:dispose'));
+    api.dispose();
     degrade();
     return;
   }

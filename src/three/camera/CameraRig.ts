@@ -4,6 +4,70 @@ import { damp, easeInOutCubic } from '../utils/tween';
 import { ORBIT_LIMITS, PARALLAX, type CameraPose } from './poses';
 
 /**
+ * Camera poses are art-directed at 16:9. Narrow viewports preserve that
+ * horizontal framing by default: first widen the vertical lens, then dolly
+ * away once the lens reaches a comfortable portrait limit. Individual poses
+ * may opt into a tighter portrait composition.
+ */
+export const CAMERA_REFERENCE_ASPECT = 16 / 9;
+export const CAMERA_PORTRAIT_FOV_CAP = 66;
+export const CAMERA_PORTRAIT_BLEND_START = 1;
+export const CAMERA_PORTRAIT_BLEND_END = 3 / 4;
+
+export interface ResponsiveCameraFit {
+  fov: number;
+  distanceScale: number;
+}
+
+export function responsiveCameraFit(
+  authoredFov: number,
+  aspect: number,
+  horizontalSpanScale = 1,
+): ResponsiveCameraFit {
+  if (
+    !Number.isFinite(aspect) ||
+    aspect <= 0 ||
+    aspect >= CAMERA_REFERENCE_ASPECT
+  ) {
+    return { fov: authoredFov, distanceScale: 1 };
+  }
+
+  const safeSpanScale =
+    Number.isFinite(horizontalSpanScale) && horizontalSpanScale > 0
+      ? horizontalSpanScale
+      : 1;
+  const horizontalHalfTangent =
+    Math.tan(THREE.MathUtils.degToRad(authoredFov) / 2) *
+    CAMERA_REFERENCE_ASPECT *
+    safeSpanScale;
+  const requiredFov = THREE.MathUtils.radToDeg(
+    2 * Math.atan(horizontalHalfTangent / aspect),
+  );
+
+  if (requiredFov <= CAMERA_PORTRAIT_FOV_CAP) {
+    return { fov: requiredFov, distanceScale: 1 };
+  }
+
+  const cappedHalfTangent =
+    Math.tan(THREE.MathUtils.degToRad(CAMERA_PORTRAIT_FOV_CAP) / 2) * aspect;
+
+  return {
+    fov: CAMERA_PORTRAIT_FOV_CAP,
+    distanceScale: horizontalHalfTangent / cappedHalfTangent,
+  };
+}
+
+/** Blend portrait art direction in smoothly between square and 3:4. */
+export function portraitCompositionWeight(aspect: number): number {
+  if (!Number.isFinite(aspect) || aspect <= 0) return 0;
+  return 1 - THREE.MathUtils.smoothstep(
+    aspect,
+    CAMERA_PORTRAIT_BLEND_END,
+    CAMERA_PORTRAIT_BLEND_START,
+  );
+}
+
+/**
  * 相机系统：三层叠加
  *   基础位姿（补间层）→ 有限环视（yaw/pitch, ±15°/±8°, 阻尼）→ 视差微位移
  * 补间期间环视与视差冻结渐出；聚焦态禁用环视。
@@ -12,6 +76,8 @@ export class CameraRig {
   private basePos = new THREE.Vector3();
   private baseTarget = new THREE.Vector3();
   private baseFov = 42;
+  private basePortraitSpanScale = 1;
+  private basePortraitLookOffset = new THREE.Vector3();
 
   private yaw = 0;
   private pitch = 0;
@@ -32,11 +98,20 @@ export class CameraRig {
 
   constructor(private manager: SceneManager) {}
 
+  /** Recompose the authored pose after SceneManager updates camera.aspect. */
+  resize(): void {
+    this.compose();
+  }
+
   /** 立即跳到位姿（无动画） */
   snapTo(pose: CameraPose): void {
     this.basePos.copy(pose.position);
     this.baseTarget.copy(pose.target);
     this.baseFov = pose.fov;
+    this.basePortraitSpanScale = pose.portrait?.horizontalSpanScale ?? 1;
+    this.basePortraitLookOffset.copy(
+      pose.portrait?.lookOffset ?? new THREE.Vector3(),
+    );
     this.yaw = this.yawTarget = 0;
     this.pitch = this.pitchTarget = 0;
     this.compose();
@@ -50,6 +125,10 @@ export class CameraRig {
     const fromPos = this.basePos.clone();
     const fromTarget = this.baseTarget.clone();
     const fromFov = this.baseFov;
+    const fromPortraitSpanScale = this.basePortraitSpanScale;
+    const fromPortraitLookOffset = this.basePortraitLookOffset.clone();
+    const toPortraitSpanScale = pose.portrait?.horizontalSpanScale ?? 1;
+    const toPortraitLookOffset = pose.portrait?.lookOffset ?? new THREE.Vector3();
     // 环视残留角并入起始位姿，避免跳变
     this.bakeOrbitIntoBase(fromPos, fromTarget);
     this.yaw = this.yawTarget = 0;
@@ -63,6 +142,16 @@ export class CameraRig {
           this.basePos.lerpVectors(fromPos, pose.position, t);
           this.baseTarget.lerpVectors(fromTarget, pose.target, t);
           this.baseFov = fromFov + (pose.fov - fromFov) * t;
+          this.basePortraitSpanScale = THREE.MathUtils.lerp(
+            fromPortraitSpanScale,
+            toPortraitSpanScale,
+            t,
+          );
+          this.basePortraitLookOffset.lerpVectors(
+            fromPortraitLookOffset,
+            toPortraitLookOffset,
+            t,
+          );
           this.compose();
         },
         onComplete: () => {
@@ -160,11 +249,23 @@ export class CameraRig {
   /** 由基础位姿 + 环视 + 视差合成最终相机 */
   private compose(): void {
     const camera = this.manager.camera;
+    const portraitWeight = portraitCompositionWeight(camera.aspect);
+    const portraitSpanScale = THREE.MathUtils.lerp(
+      1,
+      this.basePortraitSpanScale,
+      portraitWeight,
+    );
+    const responsiveFit = responsiveCameraFit(
+      this.baseFov,
+      camera.aspect,
+      portraitSpanScale,
+    );
     const offset = this.basePos.clone().sub(this.baseTarget);
     const rotated =
       this.yaw !== 0 || this.pitch !== 0
         ? this.applyOrbit(offset, this.yaw, this.pitch)
         : offset;
+    rotated.multiplyScalar(responsiveFit.distanceScale);
 
     camera.position
       .copy(this.baseTarget)
@@ -179,6 +280,7 @@ export class CameraRig {
 
     const lookTarget = this.baseTarget
       .clone()
+      .addScaledVector(this.basePortraitLookOffset, portraitWeight)
       .add(
         new THREE.Vector3(
           this.parallax.x * PARALLAX.targetAmp,
@@ -188,8 +290,8 @@ export class CameraRig {
       );
     camera.lookAt(lookTarget);
 
-    if (Math.abs(camera.fov - this.baseFov) > 1e-3) {
-      camera.fov = this.baseFov;
+    if (Math.abs(camera.fov - responsiveFit.fov) > 1e-3) {
+      camera.fov = responsiveFit.fov;
       camera.updateProjectionMatrix();
     }
     this.manager.invalidate();

@@ -18,7 +18,7 @@ import { damp } from '../utils/tween';
 const TARGET_MINUTES = hmToMinutes(7, 20);
 const TOLERANCE = 1;
 /** 初始停摆位：6:50（拖到 7:20 约半圈分针，符合 0-8s 拖动节奏） */
-const INITIAL_MINUTES = hmToMinutes(6, 50);
+export const LOADER_HANDOFF_MINUTES = hmToMinutes(6, 50);
 /** 成功判定需要指针静止驻留的时长（防扫过误判） */
 const DWELL_SECONDS = 0.5;
 
@@ -29,8 +29,8 @@ const DWELL_SECONDS = 0.5;
  */
 export class ClockController {
   /** 连续分钟数（可为小数，跨 12 点不回绕） */
-  private totalMinutes = INITIAL_MINUTES;
-  private displayMinutes = INITIAL_MINUTES;
+  private totalMinutes = LOADER_HANDOFF_MINUTES;
+  private displayMinutes = LOADER_HANDOFF_MINUTES;
 
   private dragging = false;
   private prevPointerAngle = 0;
@@ -39,7 +39,7 @@ export class ClockController {
   private startedAt = 0;
   private wrongTargetCount = 0;
   private lastHintAt = 0;
-  private lastDetentMinute = Math.round(INITIAL_MINUTES);
+  private lastDetentMinute = Math.round(LOADER_HANDOFF_MINUTES);
 
   private facePlane = new THREE.Plane();
   private removeUpdater: (() => void) | null = null;
@@ -63,8 +63,8 @@ export class ClockController {
   begin(): void {
     this.startedAt = performance.now();
     this.succeeded = false;
-    this.totalMinutes = INITIAL_MINUTES;
-    this.displayMinutes = INITIAL_MINUTES;
+    this.totalMinutes = LOADER_HANDOFF_MINUTES;
+    this.displayMinutes = LOADER_HANDOFF_MINUTES;
     this.applyHands();
     this.wake();
   }
@@ -245,6 +245,59 @@ export class ClockController {
           this.applyHands();
         },
         onComplete: () => resolve(),
+      });
+    });
+  }
+
+  /**
+   * HOME 加载海报的确定性交接位。与 ENTRY 共用 6:50，并将秒针
+   * 收在 12 点，避免静态海报和 WebGL 首帧出现两组指针。
+   */
+  setToLoaderHandoff(): void {
+    this.removeUpdater?.();
+    this.removeUpdater = null;
+    this.dragging = false;
+    this.secondRunning = false;
+    this.secondAccum = 0;
+    this.secondAngle = 0;
+    this.totalMinutes = LOADER_HANDOFF_MINUTES;
+    this.displayMinutes = LOADER_HANDOFF_MINUTES;
+    this.lastDetentMinute = Math.round(LOADER_HANDOFF_MINUTES);
+    this.succeeded = true;
+    this.applyHands();
+    this.applySecondHand();
+  }
+
+  /** 加载层真正移除后，从确定位平滑进入访问当下的本地时间。 */
+  releaseLoaderHandoff(duration = 1.35): Promise<void> {
+    const now = new Date();
+    const real = hmToMinutes(now.getHours(), now.getMinutes());
+    const current =
+      ((this.totalMinutes % MINUTES_PER_CYCLE) + MINUTES_PER_CYCLE) % MINUTES_PER_CYCLE;
+    let minuteDiff = real - current;
+    if (minuteDiff > MINUTES_PER_CYCLE / 2) minuteDiff -= MINUTES_PER_CYCLE;
+    if (minuteDiff < -MINUTES_PER_CYCLE / 2) minuteDiff += MINUTES_PER_CYCLE;
+    const minuteFrom = this.totalMinutes;
+
+    const secondFrom = this.secondAngle;
+    const secondTarget = ((now.getSeconds() + duration) % 60) * 6;
+    const secondDiff = shortestDeg(secondFrom, secondTarget);
+
+    return new Promise((resolve) => {
+      this.manager.tweens.run({
+        duration,
+        onUpdate: (t) => {
+          this.totalMinutes = minuteFrom + minuteDiff * t;
+          this.displayMinutes = this.totalMinutes;
+          this.secondAngle = secondFrom + secondDiff * t;
+          this.applyHands();
+          this.applySecondHand();
+        },
+        onComplete: () => {
+          // 补间歇期内经过的时间，再启动每秒步进。
+          this.setToRealTime();
+          resolve();
+        },
       });
     });
   }

@@ -63,7 +63,8 @@ MODEL_DIR = os.path.join(ASSET_ROOT, "assets-src", "models")
 
 
 def import_asset(slug, name, location, rot_z=0.0, target_height=None,
-                 target_width=None, max_parts=None, drop_slots=()):
+                 target_width=None, max_parts=None, drop_slots=(),
+                 target_triangles=None):
     """
     导入 Poly Haven CC0 模型（1k gltf），合并为单个对象并按契约命名。
     location 用 three 坐标（内部经 P() 转换）；target_height/width 按包围盒等比缩放（米）。
@@ -133,6 +134,25 @@ def import_asset(slug, name, location, rot_z=0.0, target_height=None,
             bm.to_mesh(obj.data)
             bm.free()
             print(f"[import] {slug}: dropped {len(gone)} faces {sorted(drop_idx)}")
+
+    # Poly Haven 的 1K 只代表贴图分辨率，不代表低模。盆栽和书本原始面数占
+    # 整个房间近九成，却只在背景里出现；在这里保 UV/材质做确定性减面。
+    if target_triangles:
+        before_triangles = sum(max(len(poly.vertices) - 2, 0)
+                               for poly in obj.data.polygons)
+        if before_triangles > target_triangles:
+            ratio = max(0.01, target_triangles / before_triangles)
+            decimate = obj.modifiers.new("web_budget", 'DECIMATE')
+            decimate.decimate_type = 'COLLAPSE'
+            decimate.ratio = ratio
+            if hasattr(decimate, "use_collapse_triangulate"):
+                decimate.use_collapse_triangulate = True
+            bpy.context.view_layer.objects.active = obj
+            obj.select_set(True)
+            bpy.ops.object.modifier_apply(modifier=decimate.name)
+            after_triangles = sum(max(len(poly.vertices) - 2, 0)
+                                  for poly in obj.data.polygons)
+            print(f"[import] {slug}: decimate {before_triangles} -> {after_triangles} tris")
 
     # 归一化：原点移到底部中心
     bbox = [obj.matrix_world @ Vector(c) for c in obj.bound_box]
@@ -219,7 +239,59 @@ def _save_lum(path, lum, base, rng, grain=0.014):
     _write_png(path, (rgb * 255.0 + 0.5).astype(np.uint8))
 
 
-def make_wallpaper(path, size=512, stripes=8):
+def _save_gray(path, values):
+    """把 0..1 标量场写成 RGB 灰度图，方便 glTF/WebP 管线统一处理。"""
+    gray = np.clip(values * 255.0 + 0.5, 0, 255).astype(np.uint8)
+    _write_png(path, np.repeat(gray[..., None], 3, axis=2))
+
+
+def _save_normal(path, height, strength=1.0):
+    """由可平铺高度场生成 OpenGL 切线空间法线（绿色通道朝 +Y）。"""
+    dx = (np.roll(height, -1, axis=1) - np.roll(height, 1, axis=1)) * strength
+    dy = (np.roll(height, -1, axis=0) - np.roll(height, 1, axis=0)) * strength
+    normal = np.stack((-dx, -dy, np.ones_like(height)), axis=-1)
+    normal /= np.maximum(np.linalg.norm(normal, axis=-1, keepdims=True), 1e-6)
+    rgb = np.clip(normal * 0.5 + 0.5, 0.0, 1.0)
+    _write_png(path, (rgb * 255.0 + 0.5).astype(np.uint8))
+
+
+def _save_orm(path, occlusion, roughness, metallic=0.0):
+    """写 glTF ORM：R=AO、G=roughness、B=metallic。"""
+    shape = roughness.shape
+    metal = (np.full(shape, metallic, dtype=np.float32)
+             if np.isscalar(metallic) else metallic)
+    orm = np.stack((occlusion, roughness, metal), axis=-1)
+    _write_png(path, (np.clip(orm, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8))
+
+
+def _read_luma(filename):
+    """读取现有 1K PBR 图，返回线性亮度；仅用于派生细微 normal/AO。"""
+    image = bpy.data.images.load(os.path.join(TEX_DIR, filename), check_existing=True)
+    width, height = image.size
+    pixels = np.empty(width * height * 4, dtype=np.float32)
+    image.pixels.foreach_get(pixels)
+    rgb = pixels.reshape(height, width, 4)[..., :3]
+    return rgb[..., 0] * 0.2126 + rgb[..., 1] * 0.7152 + rgb[..., 2] * 0.0722
+
+
+def make_derived_surface_maps(diff_file, normal_path, orm_path,
+                              rough_file=None, rough_base=0.72,
+                              normal_strength=2.0):
+    """为只有 albedo/roughness 的旧素材补 normal 与共享 ORM。"""
+    height = _read_luma(diff_file)
+    height = height - (_tileable_noise(height.shape[0], 10,
+                                       np.random.default_rng(91)) - 0.5) * 0.04
+    _save_normal(normal_path, height, strength=normal_strength)
+    if rough_file:
+        rough = np.clip(_read_luma(rough_file), 0.18, 0.98)
+    else:
+        rough = np.clip(rough_base + (0.5 - height) * 0.20, 0.38, 0.96)
+    # 凹处稍暗，幅度刻意克制，避免 aoMap 把大表面烤脏。
+    ao = np.clip(0.94 + (height - np.mean(height)) * 0.12, 0.80, 1.0)
+    _save_orm(orm_path, ao, rough)
+
+
+def make_wallpaper(diff_path, normal_path, orm_path, size=1024, stripes=8):
     """腰线以上的墙纸：同色系宽窄竖条 + 细麻织理（对比压到 5% 以内，不抢戏）"""
     rng = np.random.default_rng(7)
     t = np.arange(size) / size
@@ -229,37 +301,62 @@ def make_wallpaper(path, size=512, stripes=8):
     band = np.where(phase < 0.60, 1.0, 1.048)                 # 宽条 / 窄条
     band = band - np.exp(-((phase - 0.60) / 0.013) ** 2) * 0.055  # 交界一道细暗线
     band = band - np.exp(-((phase - 0.0) / 0.010) ** 2) * 0.030
-    weave = (np.sin(v * np.pi * 2 * 34) * 0.010 +
-             np.sin(u * np.pi * 2 * 26) * 0.008)
+    weave = (np.sin(v * np.pi * 2 * 46) * 0.004 +
+             np.sin(u * np.pi * 2 * 39) * 0.003)
     mottle = (_tileable_noise(size, 6, rng) - 0.5) * 0.055
     lum = np.broadcast_to(band, (size, size)) + weave + mottle
-    _save_lum(path, lum, (0.72, 0.66, 0.56), rng)
+    _save_lum(diff_path, lum, (0.72, 0.66, 0.56), rng)
+    seam = (np.exp(-((phase - 0.60) / 0.014) ** 2) * 0.18 +
+            np.exp(-((phase - 0.0) / 0.011) ** 2) * 0.10)
+    height = (0.52 - np.broadcast_to(seam, (size, size)) +
+              np.broadcast_to(weave, (size, size)) * 2.2 + mottle * 0.16)
+    _save_normal(normal_path, height, strength=2.0)
+    rough = np.clip(0.88 + (_tileable_noise(size, 18, rng) - 0.5) * 0.10,
+                    0.80, 0.97)
+    ao = np.clip(0.97 - np.broadcast_to(seam, (size, size)) * 0.22, 0.88, 1.0)
+    _save_orm(orm_path, ao, rough)
 
 
-def make_cork(path, size=512):
+def make_cork(diff_path, normal_path, orm_path, size=512):
     """软木板：粗细两级颗粒 + 大块色差"""
     rng = np.random.default_rng(11)
     lum = (0.94
            + (_tileable_noise(size, 44, rng) - 0.5) * 0.15
            + (_tileable_noise(size, 12, rng) - 0.5) * 0.08
            + (_tileable_noise(size, 120, rng) - 0.5) * 0.20)
-    _save_lum(path, lum, (0.60, 0.49, 0.35), rng, grain=0.028)
+    _save_lum(diff_path, lum, (0.60, 0.49, 0.35), rng, grain=0.028)
+    _save_normal(normal_path, lum, strength=2.8)
+    ao = np.clip(0.90 + (lum - np.mean(lum)) * 0.35, 0.72, 1.0)
+    rough = np.clip(0.90 + (_tileable_noise(size, 70, rng) - 0.5) * 0.12,
+                    0.80, 1.0)
+    _save_orm(orm_path, ao, rough)
 
 
-def make_linen(path, size=512):
-    """窗帘亚麻：经纬双向织纹 + 轻微色差"""
+def make_linen(diff_path, normal_path, orm_path, size=1024):
+    """窗帘亚麻：色彩图只保留天然色差，细经纬交给 normal，避免棋盘/摩尔纹。"""
     rng = np.random.default_rng(19)
     t = np.arange(size) / size
     u = t[None, :]
     v = t[:, None]
-    weft = np.sin(v * np.pi * 2 * 56) * 0.022
-    warp = np.sin(u * np.pi * 2 * 56) * 0.018
-    slub = (_tileable_noise(size, 26, rng) - 0.5) * 0.09
-    lum = 1.0 + weft + warp + slub
-    _save_lum(path, lum, (0.80, 0.75, 0.66), rng, grain=0.02)
+    slub = (_tileable_noise(size, 22, rng) - 0.5) * 0.075
+    broad = (_tileable_noise(size, 5, rng) - 0.5) * 0.045
+    lum = 1.0 + slub + broad
+    _save_lum(diff_path, lum, (0.80, 0.75, 0.66), rng, grain=0.010)
+
+    # 约 2mm 的可读纱线节奏，加入相位扰动，避免完美正弦格。
+    phase_u = u * np.pi * 2 * 88 + (_tileable_noise(size, 7, rng) - 0.5) * 0.8
+    phase_v = v * np.pi * 2 * 72 + (_tileable_noise(size, 9, rng) - 0.5) * 0.8
+    warp = np.sin(phase_u) * 0.42 + np.sin(phase_u * 2.0 + 0.7) * 0.08
+    weft = np.sin(phase_v) * 0.32 + np.sin(phase_v * 2.0 + 1.1) * 0.06
+    height = 0.5 + warp + weft + slub * 0.35
+    _save_normal(normal_path, height, strength=0.95)
+    rough = np.clip(0.86 + (_tileable_noise(size, 48, rng) - 0.5) * 0.12
+                    + np.abs(warp) * 0.025, 0.76, 0.98)
+    ao = np.clip(0.96 - np.maximum(-(warp + weft), 0) * 0.045, 0.88, 1.0)
+    _save_orm(orm_path, ao, rough)
 
 
-def make_rug(path, world_w, world_h, size=512):
+def make_rug(diff_path, normal_path, orm_path, world_w, world_h, size=512):
     """平织地毯：一圈麦色宽边 + 两道压线，场地是横向的织纹"""
     rng = np.random.default_rng(23)
     t = np.arange(size) / size
@@ -280,7 +377,14 @@ def make_rug(path, world_w, world_h, size=512):
     lum = np.broadcast_to(rib, (size, size)) * (0.92 + _tileable_noise(size, 52, rng) * 0.17)
     lum = lum + (rng.random((size, size)) - 0.5) * 0.02
     rgb = np.clip(col * lum[..., None], 0.0, 1.0)
-    _write_png(path, (rgb * 255.0 + 0.5).astype(np.uint8))
+    _write_png(diff_path, (rgb * 255.0 + 0.5).astype(np.uint8))
+    height = (np.broadcast_to(np.sin(v * np.pi * 2 * 72), (size, size)) * 0.45
+              + (_tileable_noise(size, 64, rng) - 0.5) * 0.35)
+    _save_normal(normal_path, height, strength=1.35)
+    rough = np.clip(0.90 + (_tileable_noise(size, 56, rng) - 0.5) * 0.10,
+                    0.82, 1.0)
+    ao = np.clip(0.94 + height * 0.035, 0.84, 1.0)
+    _save_orm(orm_path, ao, rough)
 
 
 def make_wall_art(path, size=512):
@@ -354,24 +458,103 @@ def make_wall_art(path, size=512):
     _write_png(path, (img * 255.0 + 0.5).astype(np.uint8))
 
 
+def make_micro_surface(normal_path, orm_path, kind, size=512):
+    """纯色材质共用的微表面：油漆、黄铜拉丝与纸纤维。"""
+    seeds = {"paint": 41, "brass": 43, "paper": 47}
+    rng = np.random.default_rng(seeds[kind])
+    t = np.arange(size) / size
+    u = t[None, :]
+    v = t[:, None]
+    if kind == "paint":
+        height = ((_tileable_noise(size, 32, rng) - 0.5) * 0.34
+                  + (_tileable_noise(size, 120, rng) - 0.5) * 0.10)
+        rough = np.clip(0.70 + (_tileable_noise(size, 28, rng) - 0.5) * 0.10,
+                        0.62, 0.80)
+        ao = np.clip(0.98 + height * 0.035, 0.92, 1.0)
+        metallic = 0.0
+        strength = 0.75
+    elif kind == "brass":
+        # 横向细拉丝 + 极轻的氧化斑，避免纯色金属只剩黑块和高光点。
+        brush = np.broadcast_to(np.sin(v * np.pi * 2 * 118), (size, size))
+        height = brush * 0.22 + (_tileable_noise(size, 48, rng) - 0.5) * 0.12
+        rough = np.clip(0.32 + (_tileable_noise(size, 38, rng) - 0.5) * 0.16
+                        + np.abs(brush) * 0.025, 0.22, 0.48)
+        ao = np.ones((size, size), dtype=np.float32)
+        metallic = 0.95
+        strength = 0.55
+    else:  # paper
+        fibers = (np.broadcast_to(np.sin(u * np.pi * 2 * 96), (size, size)) * 0.18
+                  + np.broadcast_to(np.sin(v * np.pi * 2 * 73), (size, size)) * 0.11)
+        height = fibers + (_tileable_noise(size, 70, rng) - 0.5) * 0.18
+        rough = np.clip(0.88 + (_tileable_noise(size, 55, rng) - 0.5) * 0.08,
+                        0.82, 0.98)
+        ao = np.clip(0.99 + height * 0.018, 0.94, 1.0)
+        metallic = 0.0
+        strength = 0.55
+    _save_normal(normal_path, height, strength=strength)
+    _save_orm(orm_path, ao, rough, metallic)
+
+
 RUG = dict(w=2.6, d=1.7, x=0.0, z=0.32)
 WALLPAPER_TILE = 0.72          # 墙纸一次平铺的世界尺寸（米），8 道竖条 = 9cm 条距
 
 
 def build_generated_textures():
-    make_wallpaper(os.path.join(GEN_DIR, "wallpaper.png"))
-    make_cork(os.path.join(GEN_DIR, "cork.png"))
-    make_linen(os.path.join(GEN_DIR, "linen.png"))
-    make_rug(os.path.join(GEN_DIR, "rug.png"), RUG["w"], RUG["d"])
+    make_wallpaper(os.path.join(GEN_DIR, "wallpaper.png"),
+                   os.path.join(GEN_DIR, "wallpaper_normal.png"),
+                   os.path.join(GEN_DIR, "wallpaper_orm.png"))
+    make_cork(os.path.join(GEN_DIR, "cork.png"),
+              os.path.join(GEN_DIR, "cork_normal.png"),
+              os.path.join(GEN_DIR, "cork_orm.png"))
+    make_linen(os.path.join(GEN_DIR, "linen.png"),
+               os.path.join(GEN_DIR, "linen_normal.png"),
+               os.path.join(GEN_DIR, "linen_orm.png"))
+    make_rug(os.path.join(GEN_DIR, "rug.png"),
+             os.path.join(GEN_DIR, "rug_normal.png"),
+             os.path.join(GEN_DIR, "rug_orm.png"), RUG["w"], RUG["d"])
     make_wall_art(os.path.join(GEN_DIR, "wall_art.png"))
+    make_derived_surface_maps(
+        "wood_table_001_diff_1k.jpg",
+        os.path.join(GEN_DIR, "wood_table_001_normal_1k.png"),
+        os.path.join(GEN_DIR, "wood_table_001_orm_1k.png"),
+        rough_file="wood_table_001_rough_1k.jpg", normal_strength=1.8)
+    make_derived_surface_maps(
+        "wood_floor_diff_1k.jpg",
+        os.path.join(GEN_DIR, "wood_floor_normal_1k.png"),
+        os.path.join(GEN_DIR, "wood_floor_orm_1k.png"),
+        rough_base=0.78, normal_strength=1.5)
+    for kind in ("paint", "brass", "paper"):
+        make_micro_surface(os.path.join(GEN_DIR, f"{kind}_normal.png"),
+                           os.path.join(GEN_DIR, f"{kind}_orm.png"), kind)
     print("[tex] generated -> %s" % GEN_DIR)
 
 
-def textured_material(name, diff_file, rough_file=None, rough=0.55,
-                      tint=None, mapping_scale=None):
-    """图像贴图材质；mapping_scale 经 KHR_texture_transform 导出（three 支持）"""
+def _gltf_settings_group():
+    """Blender glTF 导出器识别的 AO 输出节点组。"""
+    group = bpy.data.node_groups.get("glTF Material Output")
+    if group:
+        return group
+    group = bpy.data.node_groups.new("glTF Material Output", 'ShaderNodeTree')
+    group.interface.new_socket("Occlusion", socket_type="NodeSocketFloat")
+    group.nodes.new('NodeGroupOutput')
+    group.nodes.new('NodeGroupInput')
+    return group
+
+
+def _set_input(node, key, value):
+    if node and key in node.inputs:
+        node.inputs[key].default_value = value
+
+
+def textured_material(name, diff_file=None, rough_file=None, normal_file=None,
+                      orm_file=None, rough=0.55, metal=0.0, base_color=None,
+                      tint=None, mapping_scale=None, normal_strength=1.0,
+                      coat=0.0, coat_rough=0.35, sheen=0.0,
+                      double_sided=False):
+    """完整 metal-rough PBR；ORM 共图避免 AO/roughness 重复占显存。"""
     m = bpy.data.materials.new(name)
     m.use_nodes = True
+    m.use_backface_culling = not double_sided
     nodes = m.node_tree.nodes
     links = m.node_tree.links
     bsdf = nodes.get("Principled BSDF")
@@ -389,30 +572,59 @@ def textured_material(name, diff_file, rough_file=None, rough=0.55,
             links.new(mapping.outputs["Vector"], node.inputs["Vector"])
         return node
 
-    diff = tex_node(diff_file)
-    linked = False
-    if tint:
-        try:
-            mix = nodes.new("ShaderNodeMix")
-            mix.data_type = 'RGBA'
-            mix.blend_type = 'MULTIPLY'
-            mix.inputs["Factor"].default_value = 1.0
-            color_inputs = [s for s in mix.inputs if s.type == 'RGBA']
-            color_inputs[1].default_value = (*tint, 1.0)
-            color_out = next(s for s in mix.outputs if s.type == 'RGBA')
-            links.new(diff.outputs["Color"], color_inputs[0])
-            links.new(color_out, bsdf.inputs["Base Color"])
-            linked = True
-        except Exception:
-            linked = False
-    if not linked:
-        links.new(diff.outputs["Color"], bsdf.inputs["Base Color"])
+    if diff_file:
+        diff = tex_node(diff_file)
+        linked = False
+        if tint:
+            try:
+                mix = nodes.new("ShaderNodeMix")
+                mix.data_type = 'RGBA'
+                mix.blend_type = 'MULTIPLY'
+                mix.inputs["Factor"].default_value = 1.0
+                color_inputs = [s for s in mix.inputs if s.type == 'RGBA']
+                color_inputs[1].default_value = (*tint, 1.0)
+                color_out = next(s for s in mix.outputs if s.type == 'RGBA')
+                links.new(diff.outputs["Color"], color_inputs[0])
+                links.new(color_out, bsdf.inputs["Base Color"])
+                linked = True
+            except Exception:
+                linked = False
+        if not linked:
+            links.new(diff.outputs["Color"], bsdf.inputs["Base Color"])
+    elif base_color:
+        _set_input(bsdf, "Base Color", (*base_color, 1.0))
 
-    if rough_file:
+    if orm_file:
+        orm = tex_node(orm_file, non_color=True)
+        separate = nodes.new("ShaderNodeSeparateColor")
+        separate.mode = 'RGB'
+        links.new(orm.outputs["Color"], separate.inputs["Color"])
+        links.new(separate.outputs["Green"], bsdf.inputs["Roughness"])
+        links.new(separate.outputs["Blue"], bsdf.inputs["Metallic"])
+        settings = nodes.new("ShaderNodeGroup")
+        settings.node_tree = _gltf_settings_group()
+        links.new(separate.outputs["Red"], settings.inputs["Occlusion"])
+    elif rough_file:
         rough_node = tex_node(rough_file, non_color=True)
         links.new(rough_node.outputs["Color"], bsdf.inputs["Roughness"])
-    elif "Roughness" in bsdf.inputs:
-        bsdf.inputs["Roughness"].default_value = rough
+        _set_input(bsdf, "Metallic", metal)
+    else:
+        _set_input(bsdf, "Roughness", rough)
+        _set_input(bsdf, "Metallic", metal)
+
+    if normal_file:
+        normal_tex = tex_node(normal_file, non_color=True)
+        normal = nodes.new("ShaderNodeNormalMap")
+        normal.inputs["Strength"].default_value = normal_strength
+        links.new(normal_tex.outputs["Color"], normal.inputs["Color"])
+        links.new(normal.outputs["Normal"], bsdf.inputs["Normal"])
+
+    if coat > 0:
+        _set_input(bsdf, "Coat Weight", coat)
+        _set_input(bsdf, "Coat Roughness", coat_rough)
+    if sheen > 0:
+        _set_input(bsdf, "Sheen Weight", sheen)
+        _set_input(bsdf, "Sheen Roughness", 0.82)
     return m
 
 
@@ -420,6 +632,7 @@ def emissive_texture_material(name, diff_file, strength=1.0):
     """自发光贴图材质：窗外实景用，不被室内光照压暗"""
     m = bpy.data.materials.new(name)
     m.use_nodes = True
+    m.use_backface_culling = True
     nodes = m.node_tree.nodes
     links = m.node_tree.links
     bsdf = nodes.get("Principled BSDF")
@@ -439,25 +652,29 @@ _materials = {}
 
 
 def mat(name, color, rough=0.8, metal=0.0, emission=None, emission_strength=0.0,
-        alpha=None):
+        alpha=None, coat=0.0, coat_rough=0.35, sheen=0.0,
+        double_sided=False):
     if name in _materials:
         return _materials[name]
     m = bpy.data.materials.new(name)
     m.use_nodes = True
+    m.use_backface_culling = not double_sided
     bsdf = m.node_tree.nodes.get("Principled BSDF")
 
-    def set_input(node, key, value):
-        if node and key in node.inputs:
-            node.inputs[key].default_value = value
-
-    set_input(bsdf, "Base Color", (*color, 1.0))
-    set_input(bsdf, "Roughness", rough)
-    set_input(bsdf, "Metallic", metal)
+    _set_input(bsdf, "Base Color", (*color, 1.0))
+    _set_input(bsdf, "Roughness", rough)
+    _set_input(bsdf, "Metallic", metal)
+    if coat > 0:
+        _set_input(bsdf, "Coat Weight", coat)
+        _set_input(bsdf, "Coat Roughness", coat_rough)
+    if sheen > 0:
+        _set_input(bsdf, "Sheen Weight", sheen)
+        _set_input(bsdf, "Sheen Roughness", 0.82)
     if emission is not None:
-        set_input(bsdf, "Emission Color", (*emission, 1.0))
-        set_input(bsdf, "Emission Strength", emission_strength)
+        _set_input(bsdf, "Emission Color", (*emission, 1.0))
+        _set_input(bsdf, "Emission Strength", emission_strength)
     if alpha is not None:
-        set_input(bsdf, "Alpha", alpha)
+        _set_input(bsdf, "Alpha", alpha)
         m.blend_method = 'BLEND'
     _materials[name] = m
     return m
@@ -465,19 +682,34 @@ def mat(name, color, rough=0.8, metal=0.0, emission=None, emission_strength=0.0,
 
 def build_materials():
     tex = dict(
-        # 真实 PBR 贴图（CC0 / Poly Haven）
+        # 主视觉木材保留 1K：albedo + normal + 共享 ORM；轻漆层只负责宽高光。
         wood_desk=textured_material("wood_desk", "wood_table_001_diff_1k.jpg",
-                                    rough_file="wood_table_001_rough_1k.jpg"),
-        # UV 密度由 set_uv_density 统一控制，材质里不再叠 mapping
+                                    normal_file="generated/wood_table_001_normal_1k.png",
+                                    orm_file="generated/wood_table_001_orm_1k.png",
+                                    normal_strength=0.62, coat=0.08, coat_rough=0.38),
         wood_floor=textured_material("wood_floor", "wood_floor_diff_1k.jpg",
-                                     rough=0.8, tint=(0.55, 0.42, 0.32)),
+                                     normal_file="generated/wood_floor_normal_1k.png",
+                                     orm_file="generated/wood_floor_orm_1k.png",
+                                     normal_strength=0.48,
+                                     tint=(0.55, 0.42, 0.32)),
         # 腰线以上：墙纸（程序化生成，配色直接对齐 tokens 的暖中性色系）
         wallpaper=textured_material("wallpaper", "generated/wallpaper.png",
-                                    rough=0.96),
-        cork=textured_material("cork", "generated/cork.png", rough=0.95),
-        linen=textured_material("linen", "generated/linen.png", rough=0.92,
-                                tint=(0.82, 0.79, 0.72)),
-        rug=textured_material("rug", "generated/rug.png", rough=0.95),
+                                    normal_file="generated/wallpaper_normal.png",
+                                    orm_file="generated/wallpaper_orm.png",
+                                    normal_strength=0.42),
+        cork=textured_material("cork", "generated/cork.png",
+                               normal_file="generated/cork_normal.png",
+                               orm_file="generated/cork_orm.png",
+                               normal_strength=0.72),
+        linen=textured_material("linen", "generated/linen.png",
+                                normal_file="generated/linen_normal.png",
+                                orm_file="generated/linen_orm.png",
+                                normal_strength=0.38, sheen=0.12,
+                                tint=(0.82, 0.79, 0.72), double_sided=True),
+        rug=textured_material("rug", "generated/rug.png",
+                              normal_file="generated/rug_normal.png",
+                              orm_file="generated/rug_orm.png",
+                              normal_strength=0.28),
         wall_art=textured_material("wall_art", "generated/wall_art.png", rough=0.86),
         terracotta=textured_material("terracotta", "terracotta.jpg",
                                      rough=0.8, tint=(0.85, 0.62, 0.45),
@@ -487,6 +719,10 @@ def build_materials():
         window_view=emissive_texture_material("window_view", "window_view.jpg",
                                               strength=1.0),
     )
+    paint_normal = "generated/paint_normal.png"
+    paint_orm = "generated/paint_orm.png"
+    paper_normal = "generated/paper_normal.png"
+    paper_orm = "generated/paper_orm.png"
     return dict(
         **tex,
         wood=mat("wood", (0.28, 0.16, 0.08), rough=0.6),
@@ -495,20 +731,37 @@ def build_materials():
         # 抽屉内壁：浅色生木（与深色外壳形成明暗差，空腔深度才可读）
         wood_raw=mat("wood_raw", (0.52, 0.38, 0.24), rough=0.85),
         # 墙裙护墙板：奶油漆面，与墙体拉开一点明度差
-        wainscot=mat("wainscot", (0.72, 0.66, 0.55), rough=0.7),
+        wainscot=textured_material("wainscot", base_color=(0.72, 0.66, 0.55),
+                                   normal_file=paint_normal, orm_file=paint_orm,
+                                   normal_strength=0.18, mapping_scale=(2.0, 2.0),
+                                   coat=0.04, coat_rough=0.48),
         # 日历正面：运行时注入 CanvasTexture（GitHub 提交记录）
         calendar_face=mat("calendar_face", (1.0, 1.0, 1.0), rough=0.92),
-        wainscot_trim=mat("wainscot_trim", (0.62, 0.55, 0.45), rough=0.65),
+        wainscot_trim=textured_material("wainscot_trim", base_color=(0.62, 0.55, 0.45),
+                                        normal_file=paint_normal, orm_file=paint_orm,
+                                        normal_strength=0.16, mapping_scale=(2.0, 2.0),
+                                        coat=0.05, coat_rough=0.44),
         floor=mat("floor", (0.16, 0.10, 0.06), rough=0.9),
         wall=mat("wall", (0.62, 0.52, 0.38), rough=1.0),
-        paper=mat("paper", (0.93, 0.88, 0.78), rough=0.9),
-        paper_dim=mat("paper_dim", (0.85, 0.79, 0.66), rough=0.9),
-        brass=mat("brass", (0.55, 0.38, 0.13), rough=0.28, metal=0.95),
+        paper=textured_material("paper", base_color=(0.93, 0.88, 0.78),
+                                normal_file=paper_normal, orm_file=paper_orm,
+                                normal_strength=0.16, mapping_scale=(3.0, 3.0)),
+        paper_dim=textured_material("paper_dim", base_color=(0.85, 0.79, 0.66),
+                                    normal_file=paper_normal, orm_file=paper_orm,
+                                    normal_strength=0.16, mapping_scale=(3.0, 3.0)),
+        brass=textured_material("brass", base_color=(0.55, 0.38, 0.13),
+                                normal_file="generated/brass_normal.png",
+                                orm_file="generated/brass_orm.png",
+                                normal_strength=0.22, mapping_scale=(1.6, 1.6),
+                                coat=0.10, coat_rough=0.30),
         dark=mat("dark", (0.05, 0.045, 0.04), rough=0.5),
         ink=mat("ink", (0.08, 0.06, 0.04), rough=0.65),
-        ceramic=mat("ceramic", (0.95, 0.91, 0.83), rough=0.32),
+        ceramic=mat("ceramic", (0.95, 0.91, 0.83), rough=0.28,
+                    coat=0.24, coat_rough=0.16),
         coffee=mat("coffee", (0.10, 0.05, 0.02), rough=0.15),
-        sticky=mat("sticky_paper", (0.92, 0.83, 0.47), rough=0.95),
+        sticky=textured_material("sticky_paper", base_color=(0.92, 0.83, 0.47),
+                                 normal_file=paper_normal, orm_file=paper_orm,
+                                 normal_strength=0.14, mapping_scale=(3.0, 3.0)),
         # 软木板上钉的照片：两种冲印色（黑白 / 偏冷），只是小色块，够读即可
         photo_grey=mat("photo_grey", (0.34, 0.33, 0.31), rough=0.42),
         photo_warm=mat("photo_warm", (0.40, 0.31, 0.22), rough=0.42),
@@ -517,8 +770,11 @@ def build_materials():
         # 窗边光很强，中间调会被打成灰白塑料管，必须压到深色才读得出「布绳」。
         linen_dim=mat("linen_dim", (0.17, 0.14, 0.10), rough=0.95),
         leaf=mat("leaf", (0.24, 0.35, 0.18), rough=0.85),
-        glass=mat("glass", (0.85, 0.92, 0.95), rough=0.08, alpha=0.10),
-        clock_face=mat("clock_face_mat", (0.90, 0.85, 0.72), rough=0.85),
+        glass=mat("glass", (0.85, 0.92, 0.95), rough=0.08, alpha=0.10,
+                  double_sided=True),
+        clock_face=textured_material("clock_face_mat", base_color=(0.90, 0.85, 0.72),
+                                     normal_file=paper_normal, orm_file=paper_orm,
+                                     normal_strength=0.12, mapping_scale=(2.0, 2.0)),
         tick=mat("tick_mat", (0.33, 0.27, 0.20), rough=0.7,
                  emission=(0.79, 0.64, 0.36), emission_strength=0.01),
         bulb=mat("bulb_mat", (1.0, 0.93, 0.80), rough=0.4,
@@ -558,13 +814,36 @@ def _finish(obj, name, material, smooth=False, bevel=0.0):
     return obj
 
 
-def add_box(name, size, loc, material, bevel=0.0, mesh_offset=(0, 0, 0)):
+def set_box_uv_density(obj, tile=0.55):
+    """按局部真实尺寸做盒体三向投影；木纹不再困在默认 cube atlas 的 1/16 区域。"""
+    mesh = obj.data
+    uv = mesh.uv_layers.active
+    if not uv:
+        uv = mesh.uv_layers.new(name="UVMap")
+    inv = 1.0 / max(tile, 0.01)
+    for poly in mesh.polygons:
+        nx, ny, nz = map(abs, poly.normal)
+        for li in poly.loop_indices:
+            co = mesh.vertices[mesh.loops[li].vertex_index].co
+            if nz >= nx and nz >= ny:      # 水平面：X/Y（three X/Z）
+                value = (co.x * inv, co.y * inv)
+            elif ny >= nx:                 # 前后面：X/Z
+                value = (co.x * inv, co.z * inv)
+            else:                          # 侧面：Y/Z
+                value = (co.y * inv, co.z * inv)
+            uv.data[li].uv = value
+
+
+def add_box(name, size, loc, material, bevel=0.0, mesh_offset=(0, 0, 0),
+            uv_tile=None):
     """尺寸/偏移均为 Blender 坐标；mesh_offset 让原点偏离几何中心（pivot 控制）"""
     bpy.ops.mesh.primitive_cube_add(size=1, location=loc)
     obj = bpy.context.object
     obj.data.transform(Matrix.Diagonal((*size, 1.0)))
     if mesh_offset != (0, 0, 0):
         obj.data.transform(Matrix.Translation(Vector(mesh_offset)))
+    if uv_tile:
+        set_box_uv_density(obj, tile=uv_tile)
     return _finish(obj, name, material, bevel=bevel)
 
 
@@ -589,7 +868,7 @@ def add_sphere(name, radius, loc, material, seg=24):
 def add_torus(name, major, minor, loc, material, rot=None):
     bpy.ops.mesh.primitive_torus_add(major_radius=major, minor_radius=minor,
                                      location=loc,
-                                     major_segments=40, minor_segments=14)
+                                     major_segments=28, minor_segments=8)
     obj = bpy.context.object
     if rot:
         obj.rotation_euler = rot
@@ -831,7 +1110,8 @@ def build_room(M):
     objs.append(rail)
     # 墙裙：整块浅色护墙板 + 稀疏细压条（深色细竖条会读成黑栅栏，改浅色宽板）
     panel = add_box("decor_wainscot_panel", (wall_w, 0.010, rail_y - skirt_h),
-                    P(0, (rail_y + skirt_h) / 2, wz + 0.006), M["wainscot"])
+                    P(0, (rail_y + skirt_h) / 2, wz + 0.006), M["wainscot"],
+                    uv_tile=0.55)
     objs.append(panel)
     # 挂镜线（窗顶之上的一道细木条）+ 顶部石膏线收边
     picture_rail = add_box("decor_picture_rail", (wall_w, 0.018, 0.022),
@@ -877,7 +1157,8 @@ def build_room(M):
     # —— 墙上搁板（右墙角，几本立着的书） ——
     shelf_x, shelf_y = 1.10, 1.14
     shelf = add_box("decor_shelf", (0.42, 0.15, 0.022),
-                    P(shelf_x, shelf_y, wz + 0.085), M["wood_desk"], bevel=0.003)
+                    P(shelf_x, shelf_y, wz + 0.085), M["wood_desk"], bevel=0.003,
+                    uv_tile=0.48)
     bracket_objs = []
     for i, bx in ((0, -0.16), (1, 0.16)):
         bracket = add_box(f"decor_shelf_bracket_{i}", (0.016, 0.085, 0.075),
@@ -888,7 +1169,7 @@ def build_room(M):
     # 搁板上的书：真实 CC0 模型（百科全书套装）
     books = import_asset("book_encyclopedia_set_01", "decor_shelf_books",
                          (shelf_x, shelf_y + 0.011, wz + 0.085),
-                         rot_z=0.0, target_width=0.35)
+                         rot_z=0.0, target_width=0.35, target_triangles=8000)
     if books:
         objs.append(books)
 
@@ -922,7 +1203,7 @@ def build_room(M):
     plant_objs = []
     plant = import_asset("potted_plant_01", "decor_potted_plant",
                          (wx - ww / 2 + 0.15, wy - wh / 2 + 0.015, WINDOW["z"] + 0.015),
-                         rot_z=0.6, target_height=0.18)
+                         rot_z=0.6, target_height=0.18, target_triangles=18000)
     if plant:
         plant_objs.append(plant)
 
@@ -1013,7 +1294,7 @@ def build_curtain(M):
     view_clearance = 0.026
     top, bottom = 1.96, 0.015
     nu, nv = 48, 36
-    tile = 0.40
+    tile = 0.18                 # 亚麻细节约每 18cm 重复，避免粗网格读成塑料帘
 
     verts_basis, verts_closed, uvs = [], [], []
     half_closed = 0.46
@@ -1060,11 +1341,12 @@ def build_curtain(M):
 
         for i in range(nu + 1):
             u = i / nu
+            drift = math.sin(t * math.pi) * 0.18 + math.sin(t * math.tau) * 0.045
 
             # --- Closed 状态：双谐波 S 型波浪褶皱 ---
             fold_c = (
-                math.sin(u * math.pi * 12.0 + 0.3) * 0.82
-                + math.sin(u * math.pi * 24.0 + 0.6) * 0.18
+                math.sin(u * math.pi * 12.0 + 0.3 + drift) * 0.82
+                + math.sin(u * math.pi * 24.0 + 0.6 - drift * 0.45) * 0.18
             )
             # 顶部捏褶：在最顶部 5cm（y > 1.90）稍微压平对齐挂钩
             if y > 1.90:
@@ -1083,8 +1365,8 @@ def build_curtain(M):
 
             # --- Basis 状态：密集堆叠褶皱 ---
             fold_b = (
-                math.sin(u * math.pi * 8.0 + 0.5) * 0.80
-                + math.sin(u * math.pi * 16.0) * 0.20
+                math.sin(u * math.pi * 8.0 + 0.5 + drift) * 0.80
+                + math.sin(u * math.pi * 16.0 - drift * 0.4) * 0.20
             )
             verts_basis.append(
                 P(
@@ -1149,10 +1431,14 @@ def build_curtain(M):
 # ---------------------------------------------------------------- 书桌
 def build_desk(M):
     objs = []
+    # 与占位场景 / naming.ts 保持一致：桌体（含抽屉）必须有稳定的契约根节点。
+    # 不能只依赖 desk_top 之类的装饰网格名，否则资产重建后 NodeRegistry
+    # 无法确认整张书桌已经完整装配。
+    body_root = add_empty("desk_body", P(0, 0, 0))
     dz = -0.08  # 桌面中心的 three-Z 偏移（同占位场景）
     top = add_box("desk_top", (DESK["w"], DESK["d"], DESK["thickness"]),
                   P(0, DESK["top"] - DESK["thickness"] / 2, dz), M["wood_desk"],
-                  bevel=0.008)
+                  bevel=0.008, uv_tile=0.52)
     objs.append(top)
 
     leg_h = DESK["top"] - DESK["thickness"]
@@ -1181,21 +1467,21 @@ def build_desk(M):
     if seg_l_w > 0.01:
         objs.append(add_box("decor_apron_l", (seg_l_w, 0.02, 0.16),
                             P(apron_left_x + seg_l_w / 2, apron_y, apron_z),
-                            M["wood_desk"]))
+                            M["wood_desk"], bevel=0.002, uv_tile=0.52))
     seg_r_w = apron_right_x - open_right
     if seg_r_w > 0.01:
         objs.append(add_box("decor_apron_r", (seg_r_w, 0.02, 0.16),
                             P(open_right + seg_r_w / 2, apron_y, apron_z),
-                            M["wood_desk"]))
+                            M["wood_desk"], bevel=0.002, uv_tile=0.52))
     # 开口上方与下方的过梁（0.16 高的前梁减去开口高度）
     top_strip = (0.16 - opening_h) / 2
     if top_strip > 0.005:
         objs.append(add_box("decor_apron_top", (opening_w, 0.02, top_strip),
                             P(DRAWER["x"], apron_y + opening_h / 2 + top_strip / 2,
-                              apron_z), M["wood_desk"]))
+                              apron_z), M["wood_desk"], bevel=0.0015, uv_tile=0.52))
         objs.append(add_box("decor_apron_bottom", (opening_w, 0.02, top_strip),
                             P(DRAWER["x"], apron_y - opening_h / 2 - top_strip / 2,
-                              apron_z), M["wood_desk"]))
+                              apron_z), M["wood_desk"], bevel=0.0015, uv_tile=0.52))
 
     # 抽屉
     drawer_root = add_empty("drawer_root",
@@ -1212,7 +1498,8 @@ def build_desk(M):
                              dz + DESK["d"] / 2 - 0.02))
     face = add_box("decor_drawer_face", (DRAWER["face_w"], 0.018, DRAWER["face_h"]),
                    P(DRAWER["x"], DESK["top"] - DESK["thickness"] - 0.08,
-                     dz + DESK["d"] / 2 - 0.011), M["wood_desk"], bevel=0.004)
+                     dz + DESK["d"] / 2 - 0.011), M["wood_desk"], bevel=0.004,
+                   uv_tile=0.52)
 
     # 抽屉本体：真实空腔（底板 + 三面薄壁；前壁即抽屉面板）
     # 内箱要能穿过开口，所以比开口再小一圈；高度绝不能超过面板，否则从正面看得见
@@ -1254,7 +1541,9 @@ def build_desk(M):
     parent([housing, slide_root], drawer_root)
     objs += ([drawer_root, housing, slide_root, face, knob]
              + body_parts + item_roots + item_parts)
-    return objs
+    # 只挂当前仍处于顶层的对象，保留 drawer_root -> drawer_slide 等既有层级。
+    parent([obj for obj in objs if obj.parent is None], body_root)
+    return [body_root] + objs
 
 
 # ------------------------------------------------------- 抽屉里的物件（彩蛋）
@@ -1626,7 +1915,8 @@ def export_glb(objs, filepath):
     bpy.ops.object.select_all(action='DESELECT')
     for obj in objs:
         obj.select_set(True)
-    kwargs = dict(filepath=filepath, export_format='GLB', export_apply=True)
+    kwargs = dict(filepath=filepath, export_format='GLB', export_apply=True,
+                  export_tangents=True)
     try:
         bpy.ops.export_scene.gltf(use_selection=True, **kwargs)
     except TypeError:

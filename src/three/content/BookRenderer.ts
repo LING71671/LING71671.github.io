@@ -228,6 +228,7 @@ export class BookRenderer {
 
   private raycaster = new THREE.Raycaster();
   private disposed = false;
+  private loaderHandoffReleased = false;
   private reducedMotion =
     typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -325,8 +326,6 @@ export class BookRenderer {
     this.commitTextures();
     this.ready = true;
     this.manager.invalidate();
-    // 场景就绪即预渲染目录：未聚焦时笔记本也带着文字（prepare 有幂等保护，聚焦时不会重复加载）
-    void this.prepare();
   }
 
   /** 首次聚焦前调用：拉取目录并绘制（相机 0.8s 飞行时间内通常可完成） */
@@ -334,6 +333,44 @@ export class BookRenderer {
     if (!this.ready || this.tocPages) return;
     if (!this.tocLoading) this.tocLoading = this.loadToc();
     await this.tocLoading;
+  }
+
+  /** 加载海报移除后才拉取目录；首帧始终保持可复现的空白纸面。 */
+  releaseLoaderHandoff(): void {
+    if (this.loaderHandoffReleased) return;
+    this.loaderHandoffReleased = true;
+    void this.prepare().then(() => {
+      if (this.disposed) return;
+      const materials = [this.sheetL, this.sheetR]
+        .map((sheet) => sheet?.material)
+        .filter((material): material is THREE.MeshStandardMaterial =>
+          material instanceof THREE.MeshStandardMaterial,
+        );
+      if (this.reducedMotion) {
+        for (const material of materials) {
+          material.opacity = 1;
+          material.transparent = false;
+          material.depthWrite = true;
+        }
+        this.manager.invalidate();
+        return;
+      }
+      this.manager.tweens.run({
+        duration: 0.52,
+        onUpdate: (t) => {
+          for (const material of materials) material.opacity = t;
+          this.manager.invalidate();
+        },
+        onComplete: () => {
+          for (const material of materials) {
+            material.opacity = 1;
+            material.transparent = false;
+            material.depthWrite = true;
+          }
+          this.manager.invalidate();
+        },
+      });
+    });
   }
 
   get available(): boolean {
@@ -498,7 +535,14 @@ export class BookRenderer {
 
     const mesh = new THREE.Mesh(
       geo,
-      new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9, metalness: 0 }),
+      new THREE.MeshStandardMaterial({
+        map: tex,
+        roughness: 0.9,
+        metalness: 0,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      }),
     );
     mesh.name = `book_sheet_${cx < 0 ? 'l' : 'r'}`;
     mesh.position.set(cx, 0, cz);

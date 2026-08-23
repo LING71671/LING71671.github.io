@@ -7,6 +7,13 @@ export interface CameraPose {
   position: THREE.Vector3;
   target: THREE.Vector3;
   fov: number;
+  /** Optional art direction applied only after the viewport becomes portrait. */
+  portrait?: {
+    /** Fraction of the authored 16:9 horizontal span to retain. */
+    horizontalSpanScale: number;
+    /** Small world-space look offset for portrait composition. */
+    lookOffset: THREE.Vector3;
+  };
 }
 
 /** 入口时钟特写 */
@@ -21,6 +28,11 @@ export const HOME_POSE: CameraPose = {
   position: new THREE.Vector3(0.12, 1.32, 1.28),
   target: new THREE.Vector3(0, DESK_TOP_Y + 0.08, -0.15),
   fov: 42,
+  portrait: {
+    // 390×844 下桌面约占屏宽 100%；轻微向下取景，保住桌面热点并减少空墙。
+    horizontalSpanScale: 0.86,
+    lookOffset: new THREE.Vector3(0, -0.04, 0),
+  },
 };
 
 /**

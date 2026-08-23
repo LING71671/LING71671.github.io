@@ -40,9 +40,11 @@ function roundRect(
   ctx.fill();
 }
 
-function draw(ctx: CanvasRenderingContext2D, activity: Activity | null): void {
-  const now = new Date();
-
+function drawLive(
+  ctx: CanvasRenderingContext2D,
+  activity: Activity | null,
+  now: Date,
+): void {
   // 纸面
   ctx.fillStyle = '#f7f2e6';
   ctx.fillRect(0, 0, W, H);
@@ -143,19 +145,53 @@ function draw(ctx: CanvasRenderingContext2D, activity: Activity | null): void {
   }
 }
 
+/** 海报与 WebGL 首帧共用的无日期纸面，避免把捕获日期烘死在图片里。 */
+function drawHandoff(ctx: CanvasRenderingContext2D): void {
+  ctx.fillStyle = '#f7f2e6';
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#a8853c';
+  ctx.fillRect(0, 0, W, 62);
+  ctx.fillStyle = '#ded2b6';
+  ctx.fillRect(26, 108, 190, 18);
+  ctx.fillStyle = '#e9dfc8';
+  ctx.fillRect(26, 144, 122, 12);
+  ctx.fillStyle = '#ded2b6';
+  ctx.fillRect(26, 178, W - 52, 2);
+  for (let row = 0; row < 4; row += 1) {
+    for (let column = 0; column < 9; column += 1) {
+      ctx.fillStyle = row === 0 && column < 3 ? '#d4bc82' : '#e5dbc2';
+      roundRect(ctx, 30 + column * 49, 211 + row * 38, 32, 22, 4);
+    }
+  }
+}
+
 /**
- * 给日历正面网格挂上贴图；数据异步到达后重绘。
- * 返回 dispose 函数（无匹配节点时返回 null）。
+ * 给日历正面网格挂上贴图。加载期间只显示确定性纸面，遮罩移除后
+ * 才读取当日日期和 GitHub 数据，并在同一张 CanvasTexture 里交叉淡入。
  */
+export interface CalendarFaceHandle {
+  releaseLoaderHandoff(): void;
+  dispose(): void;
+}
+
 export function mountCalendarFace(
   mesh: THREE.Mesh,
   invalidate: () => void,
-): (() => void) | null {
+): CalendarFaceHandle | null {
   const canvas = document.createElement('canvas');
-  canvas.width = W;
-  canvas.height = H;
+  const handoffCanvas = document.createElement('canvas');
+  const liveCanvas = document.createElement('canvas');
+  for (const target of [canvas, handoffCanvas, liveCanvas]) {
+    target.width = W;
+    target.height = H;
+  }
   const ctx = canvas.getContext('2d');
-  if (!ctx) return null;
+  const handoffCtx = handoffCanvas.getContext('2d');
+  const liveCtx = liveCanvas.getContext('2d');
+  if (!ctx || !handoffCtx || !liveCtx) return null;
+
+  drawHandoff(handoffCtx);
+  ctx.drawImage(handoffCanvas, 0, 0);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -167,26 +203,58 @@ export function mountCalendarFace(
   material.color.setHex(0xffffff);
   material.needsUpdate = true;
 
-  const render = (activity: Activity | null): void => {
-    draw(ctx, activity);
+  let disposed = false;
+  let released = false;
+  let frame = 0;
+  let controller: AbortController | null = null;
+
+  const commit = (mix: number): void => {
+    ctx.globalAlpha = 1;
+    ctx.drawImage(handoffCanvas, 0, 0);
+    if (mix > 0) {
+      ctx.globalAlpha = mix;
+      ctx.drawImage(liveCanvas, 0, 0);
+      ctx.globalAlpha = 1;
+    }
     texture.needsUpdate = true;
     invalidate();
   };
 
-  render(null);
+  const reveal = (activity: Activity | null): void => {
+    if (disposed) return;
+    drawLive(liveCtx, activity, new Date());
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      commit(1);
+      return;
+    }
+    const startedAt = performance.now();
+    const tick = (now: number): void => {
+      if (disposed) return;
+      const linear = Math.min(1, (now - startedAt) / 520);
+      const eased = 1 - Math.pow(1 - linear, 4);
+      commit(eased);
+      if (linear < 1) frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+  };
 
-  let disposed = false;
-  void fetch(withBase('/data/github-activity.json'))
-    .then((res) => (res.ok ? res.json() : null))
-    .then((data: Activity | null) => {
-      if (!disposed && data?.days) render(data);
-    })
-    .catch(() => {
-      /* 保留占位绘制 */
-    });
-
-  return () => {
-    disposed = true;
-    texture.dispose();
+  return {
+    releaseLoaderHandoff(): void {
+      if (released || disposed) return;
+      released = true;
+      controller = new AbortController();
+      const timeout = window.setTimeout(() => controller?.abort(), 2500);
+      void fetch(withBase('/data/github-activity.json'), { signal: controller.signal })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data: Activity | null) => reveal(data?.days ? data : null))
+        .catch(() => reveal(null))
+        .finally(() => window.clearTimeout(timeout));
+    },
+    dispose(): void {
+      disposed = true;
+      controller?.abort();
+      cancelAnimationFrame(frame);
+      texture.dispose();
+    },
   };
 }
